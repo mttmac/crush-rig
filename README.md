@@ -2,15 +2,14 @@ lac1.py
 ================
 
 This is a simple python interface to the LAC-1 controller produced by SMAC US.
-Note that the home function is specifically aimed at a LCS25-025-xx-x stage,
-and should not be used without inspection. It is extremely unlikely to work for
-any setup other than mine.
+Note that the home function is specifically aimed at a LCS25-025-xx-x stage
+and should not be used without inspection. 
+Forked from: https://github.com/freespace/smac-lac-1
 
-bench.py
+crush.py
 ==================
 
-This is a simple program excercise the various functions and to gain an idea
-of how maximum velocity and acceleration settings affect the travel time.
+This program runs various tissue crush profiles at programmable force settings.
 
 License
 =======
@@ -19,7 +18,7 @@ This software is licensed under the MIT license:
 
 The MIT License (MIT)
 =====================
-Copyright (c) 2013 Shuning Bian
+Copyright (c) 2018 Matt MacDonald
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
