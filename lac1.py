@@ -14,6 +14,7 @@ ENC_COUNTS_PER_MM = 10000.0  # encoder counts per mm
 SERVO_LOOP_FREQ = 5000.0  # servo loop frequency (only when SS = 2)
 STAGE_TRAVEL_MM = 25
 MAX_TRAVEL_MM = 20
+HOME_EXTENDED = True  # true if actuator is intended to be extended at zero
 STAGE_TRAVEL_ENC = min(STAGE_TRAVEL_MM, MAX_TRAVEL_MM) * ENC_COUNTS_PER_MM
 # KV and KA define the rates in encoder per servo loop needed to achieve
 # 1 mm/s velocity and 1 mm/s/s acceleration, respectively.
@@ -58,6 +59,9 @@ class LAC1(object):
 
     # Store commands to chain together when communication latency is a concern
     chain_cmds = []
+
+    # Store last known position for travel range checking
+    current_pos_enc = None
 
     def __init__(self, port, baudRate=19200,
                  silent=True, reset=True, sleepfunc=None):
@@ -252,6 +256,15 @@ class LAC1(object):
             return None
 
     # Low level motion methods
+    def position_mode(self, **kwargs):
+        self.sendcmds('PM', **kwargs)
+
+    def velocity_mode(self, **kwargs):
+        self.sendcmds('VM', **kwargs)
+
+    def torque_mode(self, **kwargs):
+        self.sendcmds('QM', **kwargs)
+
     def go(self, **kwargs):
         self.sendcmds('GO', **kwargs)
 
@@ -282,7 +295,7 @@ class LAC1(object):
     def set_max_torque(self, q=10000, **kwargs):
         self.sendcmds('SQ', q, **kwargs)
 
-    # General motion commands
+    # General motion methods
     def set_home(self):
         '''
         Process to set home. Simply lets encoder fall under gravity and
@@ -293,98 +306,130 @@ class LAC1(object):
         self.wait(1000, for_stop=True, chain=True)
         self.sendcmds('DH0')  # store home as 0
 
-        self.home_pos_enc = self.get_position_enc
+        self.current_pos_enc = self.read_position
         self.motor_on()
 
     def home(self):
-        if self.home_pos_enc is None:
+        if self.current_pos_enc is None:
             self.set_home()
         self.sendcmds('GH')
 
-    def move_abs_enc(self, pos_enc, wait=True, getposition=False):
+    def move_enc(self, pos_enc, relative=False, wait_for_stop=True,
+                 return_pos=False):
         """
         Move to a position specified in encoder counts.
+        Alternatively move in relative encoder counts.
+        Will cease commands until actuator stops unless commanded otherwise.
+        Can optionally return the position after executing the move.
         """
-        assert abs(pos_enc) <= STAGE_TRAVEL_ENC
 
-        cmds = ['PM', '', 'MN', '', 'MA', int(pos_enc),'GO','']
-        if wait:
-          cmds += ['WS', WS_PERIOD_MS]
+        # Actuator must be homed before any motion can occur
+        assert self.current_pos_enc is not None, (
+            "Home the actuator before attempting to move")
 
-          if getposition:
-            cmds += ['TP', '']
-
-        ret = self.sendcmds(*cmds)
-
-        if wait and getposition:
-          return int(ret[0])
-
-    def move_abs_mm(self, pos_mm, **kwargs):
-        self.move_absenc(pos_mm * ENC_COUNTS_PER_MM, **kwargs)
-
-    def move_abs_um(self, pos_um, **kwargs):
-        kwargs['getposition'] = True
-        ret = self.move_absolute_enc(pos_um * ENC_COUNTS_PER_MM / 1000, **kwargs)
-        if ret is not None:
-          return 1000 * ret / ENC_COUNTS_PER_MM
-
-    def move_relative_enc(self, dist_enc, wait=True):
-        self.sendcmds('PM', '', 'MN', '', 'MR', dist_enc, 'GO', '')
-
-        if wait:
-          self.wait_stop()
-
-    def move_relative_mm(self, dist_mm, **kwargs):
-        self.move_relative_enc(dist_mm * ENC_COUNTS_PER_MM, **kwargs)
-
-
-    def get_error(self):
-        """
-        Asks LAC-1 for the last error
-        """
-        error = self.sendcmds('TE', eat_prompt=False)
-        if len(error) > 0:
-          return error[0]
+        # Check for travel range limits
+        if relative:
+            dist_enc = pos_enc
+            pos_enc += self.current_pos_enc
+        assert abs(pos_enc) <= STAGE_TRAVEL_ENC, (
+            'Commanded to move beyond travel limits')
+        if HOME_EXTENDED:
+            assert pos_enc <= 0, (
+                'Commanded to move beyond home limit')
         else:
-          return None
+            assert pos_enc >= 0, (
+                'Commanded to move beyond home limit')
 
-    def get_position_enc(self):
+        self.position_mode(chain=True)
+        self.motor_on(chain=True)
+        if relative:
+            self.sendcmds('MR', int(dist_enc), chain=True)
+        else:
+            self.sendcmds('MA', int(pos_enc), chain=True)
+        self.go(chain=True)
+
+        if wait_for_stop:
+            self.wait(for_stop=True, chain=True)
+
+        if return_pos:
+            return self.read_position()
+        else:
+            self.sendcmds()
+
+    def move_mm(self, pos_mm, **kwargs):
+        return (self.move_abs_enc(pos_mm * ENC_COUNTS_PER_MM, **kwargs) /
+                ENC_COUNTS_PER_MM)
+
+    # Read actuator methods
+    # Warning: read methods can't be chained and will end current chains
+    def read_error(self):
+        """
+        Returns the last error from LAC-1 if there is one
+        """
+        error = self.sendcmds('TE')
+        if error:
+            return error[-1]  # assume last entry in case chained
+
+    def read_position(self):
         """
         Returns the current position in encoder counts
         """
-        pos = list()
-        while len(pos) < 1:
-          try:
-            pos = self.sendcmds('TP')
-          except Exception, ex:
-            from traceback import print_exc
-            print_exc(ex)
+        return int(self.sendcmds('TP')[-1])
 
-        return int(pos[0])
-
-    def get_position_mm(self):
+    def read_position_mm(self):
         """
         Returns the current position in mm
         """
-        return self.get_position_enc() / ENC_COUNTS_PER_MM
+        return self.read_position() / ENC_COUNTS_PER_MM
 
-    def get_position_um(self):
-        return 1000 * self.get_position_enc() / ENC_COUNTS_PER_MM
-
-    def get_params(self, paramset=''):
+    def read_parameter(self, parameter=''):
         """
-        paramset is 0...n
+        Return one parameter setting (0...n) or all (default)
         """
-        return self.sendcmds('TK', paramset)
+        return self.sendcmds('TK', parameter)
 
+    def read_analog_input(self, channel=0):
+        """
+        Return an analog input reading from ADC (0...n)
+        """
+        return self.sendcmds('TA', channel)[-1]
+
+    def read_torque(self, channel=0):
+        """
+        Return the current torque of the actuator motor.
+        """
+        return self.sendcmds('TQ')[-1]
+
+    def read_force(self):
+        """
+        Return analog input reading from ADC channel 8 with attached load cell.
+        Converts reading to force based on calibration table.
+        """
+        return self.convert_force(self.read_analog_input(8))
+
+    def convert_force(voltage):
+        # Formula used to convert sensor data into Newtons as per predetermined
+        # sensor calibration curve
+        return (9.81 * ((4.3308 * int(voltage)) - 1073.1) / 1000)
+
+    def read_pos_and_force(self, channel=0):
+        """
+        Combines two simultaneous reads: position and force, to allow chaining.
+        Return units are position in mm and force in Newtons
+        """
+        raw_output = self.sendcmds('TP,TA8')
+        return (raw_output[-2] / ENC_COUNTS_PER_MM,
+                self.convert_force(raw_output[-1]))
+
+    # Shutdown methods
     def close(self):
         if self._port is not None:
-            # Send escape twice
+            # Send escape char twice
             for _ in range(2):
                 self._port.write('\033')
 
             # Abort, motor off, echo on
-            self._port.sendcmds('AB', 'MF', 'EN')
+            self._port.sendcmds('AB,MF,EN')
 
             self._port.close()
             self._port = None
