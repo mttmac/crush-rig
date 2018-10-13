@@ -1,8 +1,14 @@
 #!/usr/bin/env python
 
-# Written by: Matt MacDonald & Sachin Doshi
+# Written by Matt MacDonald & Sachin Doshi
 # For CIGITI at the Hospital for Sick Children Toronto
 # Tested on LCA50-025-72F actuator
+
+import csv
+import matplotlib.pyplot as plt
+import threading
+import matplotlib.animation as animation
+from pathlib import Path
 
 # Tests #####################################################################
 def test_set_home_macro():
