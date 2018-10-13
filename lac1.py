@@ -52,17 +52,6 @@ class LAC1(object):
     The actuator is reset (RT) on startup unless explicitly prevented.
     """
 
-    _port = None
-    _silent = True  # set False to print commands to stdout
-    _sleepfunc = time.sleep
-    _last_serial_send_time = None
-
-    # Store commands to chain together when communication latency is a concern
-    chain_cmds = []
-
-    # Store last known position for travel range checking
-    current_pos_enc = None
-
     def __init__(self, port, baudRate=19200,
                  silent=True, reset=True, sleepfunc=None):
         """
@@ -73,8 +62,17 @@ class LAC1(object):
         for integration with single threaded GUI applications.
         """
 
+        # Store commands to chain together when communication latency
+        # is a concern
+        self.chain_cmds = []
+
+        # Store last known position for travel range checking
+        self.current_pos_enc = None
+
         if sleepfunc is not None:
             self._sleepfunc = sleepfunc
+        else:
+            self._sleepfunc = time.sleep
         self._silent = silent
 
         if type(port) is str:
@@ -89,6 +87,7 @@ class LAC1(object):
             stopbits=1,
             parity='N',
             timeout=0.1)
+        self._last_serial_send_time = None
 
         # Reset then setup some initial parameters
         if reset:
