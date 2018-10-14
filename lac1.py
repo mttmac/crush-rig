@@ -5,6 +5,7 @@
 # Forked from https://github.com/freespace/smac-lac-1
 
 
+import os
 import serial
 import time
 
@@ -75,11 +76,8 @@ class LAC1(object):
             self._sleepfunc = time.sleep
         self._silent = silent
 
-        if type(port) is str:
-            import os
-            port = os.environ.get('LAC1_PORT', port)
-
         print(f'Connecting to LAC-1 on {port} ({baudRate})')
+        port = os.environ.get('LAC1_PORT', port)
         self._port = serial.Serial(
             port=port,
             baudrate=baudRate,
@@ -91,7 +89,7 @@ class LAC1(object):
 
         # Reset then setup initial parameters
         if reset:
-            self.sendcmds('RT', wait=False)  # TODO do I need RM?
+            self.sendcmds('RM,RT')
         self.sendcmds('EF', wait=False)
         self.sendcmds(
             'SS', SS,
@@ -106,6 +104,9 @@ class LAC1(object):
         # Set safe initial movement rates in mm/s, mm/s2
         self.set_max_velocity(1)
         self.set_max_acceleration(1)
+
+        # TODO neeed test?
+        print(f'Successfully connected to LAC-1 on {port} ({baudRate})!')
 
     # Communication methods
     def _readline(self, stop_on_prompt=True):
@@ -151,7 +152,7 @@ class LAC1(object):
 
         return line
 
-    def sendcmds(self, *args, chain=False, **kwargs):
+    def sendcmds(self, *args, chain=False, wait=True, callback=None):
         """
         This method sends the given commands and arguments to the LAC-1.
 
@@ -166,17 +167,11 @@ class LAC1(object):
         Running this method with no arguments will execute the stored
         chain commands and send them all at once.
 
-        Supported keyword arguments:
-
-        wait
-        ----
         If wait is True, then after sending each command, the serial stream
         is consumed until '>' is encountered. This is because SMAC emits
         '>' when it is ready for another command.
         wait is True by default
 
-        callback
-        --------
         If callback is not None, and wait is True, then after reading
         each line from the LAC-1, the callback will be invoked with the
         contents of the line.
@@ -229,13 +224,10 @@ class LAC1(object):
         assert len(tosend) <= SERIAL_MAX_LINE_LENGTH, (
             'Command exceeds allowed line length')
 
-        self._port.write(bytes(tosend + '\r', 'UTF-8'))
+        self._port.write(bytearray(tosend + '\r', 'utf-8'))
 
         # Reset chain cmds
         self.chain_cmds = []
-
-        wait = kwargs.get('wait', True)
-        callbackfunc = kwargs.get('callback', None)
 
         datalines = []
         if wait:
@@ -245,8 +237,8 @@ class LAC1(object):
                 if line == '>':
                     done = True
                 elif line is not None and len(line):
-                    if callbackfunc is not None:
-                        callbackfunc(line)
+                    if callback is not None:
+                        callback(line)
                     datalines.append(line)
                 return datalines
         else:
@@ -262,7 +254,7 @@ class LAC1(object):
         self.sendcmds('VM', **kwargs)
 
     def torque_mode(self, **kwargs):
-        self.sendcmds('QM', **kwargs)
+        self.sendcmds('QM0', **kwargs)  # only voltage mode implemented
 
     def go(self, **kwargs):
         self.sendcmds('GO', **kwargs)
@@ -293,6 +285,13 @@ class LAC1(object):
 
     def set_max_torque(self, q=10000, **kwargs):
         self.sendcmds('SQ', q, **kwargs)
+
+    def set_direction(self, extend=True, **kwargs):
+        if extend:
+            direction = 0  # extend
+        else:
+            direction = 1  # retract
+        self.sendcmds('DI' + str(direction), **kwargs)
 
     # General motion methods
     def set_home(self):
@@ -359,16 +358,32 @@ class LAC1(object):
         return (self.move_enc(pos_mm * ENC_COUNTS_PER_MM, **kwargs) /
                 ENC_COUNTS_PER_MM)
 
-    def give_clearance(self, dist_mm, **kwargs):
+    def move_clear(self, dist_mm, **kwargs):
         """
-        Provide clearance from home by moving away relatively in mm.
+        Provide clearance from home by moving a distance away from it in mm.
         """
         if HOME_EXTENDED:
             dist_mm = -abs(dist_mm)
         else:
             dist_mm = abs(dist_mm)
-        self.home()  # make sure we start at home position
-        return self.move_mm(dist_mm, relative=True, **kwargs)
+        return self.move_mm(dist_mm, **kwargs)
+
+    def move_constant_vel(self, mmpersecond, toward_home=True, **kwargs):
+        """
+        Start the actuator moving in a direction at a velocity in mm/s.
+        Moves toward home by default.
+        """
+        assert self.current_pos_enc is not None, (
+            "Home the actuator before attempting to move")
+
+        self.velocity_mode(chain=True)
+        if toward_home:
+            extend = HOME_EXTENDED
+        else:
+            extend = not HOME_EXTENDED
+        self.set_direction(extend=extend, chain=True)
+        self.set_max_velocity(mmpersecond, chain=True)
+        self.go()
 
     # Read methods
     # Warning: read methods can't be chained and will end current chains
