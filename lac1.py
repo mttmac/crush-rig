@@ -8,6 +8,7 @@
 import os
 import serial
 import time
+from math import pi
 
 
 # Constants for LCA50-025-72F actuator, change for alternative actuators
@@ -90,7 +91,7 @@ class LAC1(object):
         # Reset then setup initial parameters
         if reset:
             self.sendcmds('RM,RT', wait=False)
-            self._sleepfunc(5)  # wait 5 sec for reset
+            self._sleepfunc(3)  # wait for reset
         self.sendcmds('EF', wait=False)
         self.sendcmds(
             'SS', SS,
@@ -102,7 +103,7 @@ class LAC1(object):
             'RI', RI,
             'FR', FR)
         self.set_mode(mode='safe')  # initial movement rates
-        print(f'Successfully connected to LAC-1 on {port} ({baudRate})!')
+        print(f'Successfully connected to LAC-1 on {port} ({baudRate})')
 
     # Communication methods
     def _readline(self, stop_on_prompt=True):
@@ -173,8 +174,7 @@ class LAC1(object):
         contents of the line.
         """
 
-        if self._port is None:
-            return
+        assert self._port is not None, 'Serial communication disconnected'
 
         if len(args) == 1:
             cmds = [args[0]]
@@ -275,13 +275,13 @@ class LAC1(object):
         self.sendcmds('MF', **kwargs)
 
     def set_max_velocity(self, mmpersecond, **kwargs):
-        self.sendcmds('SV', KV * mmpersecond, **kwargs)
+        self.sendcmds('SV', KV * abs(mmpersecond), **kwargs)
 
     def set_max_acceleration(self, mmpersecond2, **kwargs):
-        self.sendcmds('SA', KA * mmpersecond2, **kwargs)
+        self.sendcmds('SA', KA * abs(mmpersecond2), **kwargs)
 
-    def set_max_torque(self, q=10000, **kwargs):
-        self.sendcmds('SQ', q, **kwargs)
+    def set_max_torque(self, torque=10000, **kwargs):
+        self.sendcmds('SQ', torque, **kwargs)
 
     def set_direction(self, extend=True, **kwargs):
         if extend:
@@ -301,7 +301,7 @@ class LAC1(object):
         self.wait(1000, for_stop=True, chain=True)
         self.sendcmds('DH0')  # store home as 0
 
-        self._current_pos_enc = self.read_position
+        self._current_pos_enc = self.read_position()
         self.motor_on()
 
     def home(self):
@@ -309,12 +309,12 @@ class LAC1(object):
             self.set_home()
         self.sendcmds('GH')
 
-    def move_enc(self, pos_enc, relative=False, wait_for_stop=True,
+    def move_enc(self, pos_enc, relative=False, wait_for_stop=False,
                  return_pos=False):
         """
         Move to a position specified in encoder counts.
         Alternatively move in relative encoder counts.
-        Will cease commands until actuator stops unless commanded otherwise.
+        Can optionally cease commands until actuator stops.
         Can optionally return the position after executing the move.
         """
 
@@ -349,7 +349,7 @@ class LAC1(object):
         if return_pos:
             return self.read_position()
         else:
-            self.sendcmds()
+            self.sendcmds(wait=False)
 
     def move_mm(self, pos_mm, **kwargs):
         pos_enc = self.move_enc(pos_mm * ENC_COUNTS_PER_MM, **kwargs)
@@ -366,7 +366,7 @@ class LAC1(object):
             dist_mm = abs(dist_mm)
         return self.move_mm(dist_mm, **kwargs)
 
-    def move_constant_vel(self, mmpersecond, toward_home=True, **kwargs):
+    def move_const_vel(self, mmpersecond, toward_home=True):
         """
         Start the actuator moving in a direction at a velocity in mm/s.
         Moves toward home by default.
@@ -381,7 +381,19 @@ class LAC1(object):
             extend = not HOME_EXTENDED
         self.set_direction(extend=extend, chain=True)
         self.set_max_velocity(mmpersecond, chain=True)
-        self.go()
+        self.go(wait=False)
+
+    def move_const_torque(self, torque, **kwargs):
+        """
+        Start the actuator moving in a direction at a velocity in mm/s.
+        Moves toward home by default.
+        """
+        assert self._current_pos_enc is not None, (
+            "Home the actuator before attempting to move")
+
+        self.set_max_torque(torque, chain=True)
+        self.torque_mode(chain=True)
+        self.go(wait=False)
 
     def set_mode(self, mode='safe'):
         """
@@ -419,6 +431,15 @@ class LAC1(object):
         if error:
             return error[-1]  # assume last entry in case chained
 
+    def read_pos_error(self):
+        """
+        Returns the current position offset from target in encoder counts
+        """
+        raw_output = self.sendcmds('TT,TP')
+        self._current_pos_enc = int(raw_output[-1])
+        target = int(raw_output[-2])
+        return self._current_pos_enc - target
+
     def read_position(self):
         """
         Returns the current position in encoder counts
@@ -432,23 +453,24 @@ class LAC1(object):
         """
         return self.read_position() / ENC_COUNTS_PER_MM
 
-    def read_parameter(self, parameter=''):
+    def read_parameters(self, pset=0):
         """
-        Return one parameter setting (0...n) or all (default)
+        Return parameter set (0 or 1)
         """
-        return self.sendcmds('TK', parameter)
+        return self.sendcmds('TK', pset)
 
     def read_analog_input(self, channel=0):
         """
         Return an analog input reading from ADC (0...n)
+        10 bit resolution (0 to 1024)
         """
-        return self.sendcmds('TA', channel)[-1]
+        return int(self.sendcmds('TA', channel)[-1])
 
     def read_torque(self, channel=0):
         """
         Return the current torque of the actuator motor.
         """
-        return self.sendcmds('TQ')[-1]
+        return int(self.sendcmds('TQ')[-1])
 
     def read_force(self):
         """
@@ -457,30 +479,45 @@ class LAC1(object):
         """
         return self.convert_force(self.read_analog_input(8))
 
-    def convert_force(voltage):
+    def convert_force(self, voltage):
         # Formula used to convert sensor data into Newtons as per predetermined
         # sensor calibration curve
         return (9.81 * ((4.3308 * int(voltage)) - 1073.1) / 1000)
 
+    def read_weight(self):
+        """
+        Converts force reading to grams at standard earth gravity.
+        """
+        return 1000 * self.read_force() / 9.81
+
+    def read_pressure(self, pin_diameter=5):
+        """
+        Converts force reading to pressure in kPa based on a circular pin
+        diameter in mm. Default pin diameter is 5 mm.
+        """
+        area = pi * (pin_diameter / 2) ** 2
+        return 1000 * self.read_force() / area
+
     def read_pos_and_force(self, channel=0):
         """
         Combines two simultaneous reads: position and force, to allow chaining.
+        Torque is also read as an indirect metric of force (units arbitrary).
         Return units are position in mm and force in Newtons
         """
-        raw_output = self.sendcmds('TP,TA8')
-        self._current_pos_enc = int(raw_output[-2])
+        raw_output = self.sendcmds('TP,TA8,TQ')
+        self._current_pos_enc = int(raw_output[-3])
         return (self._current_pos_enc / ENC_COUNTS_PER_MM,
-                self.convert_force(raw_output[-1]))
+                self.convert_force(raw_output[-2]), int(raw_output[-1]))
 
     # Shutdown methods
     def close(self):
         if self._port is not None:
             # Send escape char twice
             for _ in range(2):
-                self._port.write('\033')
+                self._port.write(bytearray('\033', 'utf-8'))
 
             # Abort, motor off, echo on
-            self._port.sendcmds('AB,MF,EN')
+            self.sendcmds('AB,MF,EN')
 
             self._port.close()
             self._port = None
