@@ -89,9 +89,9 @@ class LAC1(object):
             timeout=0.1)
         self._last_serial_send_time = None
 
-        # Reset then setup some initial parameters
+        # Reset then setup initial parameters
         if reset:
-            self.sendcmds('RT', wait=False)
+            self.sendcmds('RT', wait=False)  # TODO do I need RM?
         self.sendcmds('EF', wait=False)
         self.sendcmds(
             'SS', SS,
@@ -356,10 +356,21 @@ class LAC1(object):
             self.sendcmds()
 
     def move_mm(self, pos_mm, **kwargs):
-        return (self.move_abs_enc(pos_mm * ENC_COUNTS_PER_MM, **kwargs) /
+        return (self.move_enc(pos_mm * ENC_COUNTS_PER_MM, **kwargs) /
                 ENC_COUNTS_PER_MM)
 
-    # Read actuator methods
+    def give_clearance(self, dist_mm, **kwargs):
+        """
+        Provide clearance from home by moving away relatively in mm.
+        """
+        if HOME_EXTENDED:
+            dist_mm = -abs(dist_mm)
+        else:
+            dist_mm = abs(dist_mm)
+        self.home()  # make sure we start at home position
+        return self.move_mm(dist_mm, relative=True, **kwargs)
+
+    # Read methods
     # Warning: read methods can't be chained and will end current chains
     def read_error(self):
         """
@@ -373,7 +384,8 @@ class LAC1(object):
         """
         Returns the current position in encoder counts
         """
-        return int(self.sendcmds('TP')[-1])
+        self.current_pos_enc = int(self.sendcmds('TP')[-1])
+        return self.current_pos_enc
 
     def read_position_mm(self):
         """
@@ -417,7 +429,8 @@ class LAC1(object):
         Return units are position in mm and force in Newtons
         """
         raw_output = self.sendcmds('TP,TA8')
-        return (raw_output[-2] / ENC_COUNTS_PER_MM,
+        self.current_pos_enc = int(raw_output[-2])
+        return (self.current_pos_enc / ENC_COUNTS_PER_MM,
                 self.convert_force(raw_output[-1]))
 
     # Shutdown methods

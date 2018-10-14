@@ -4,38 +4,53 @@
 # For CIGITI at the Hospital for Sick Children Toronto
 # Tested on LCA50-025-72F actuator
 
-
 import csv
 import matplotlib.pyplot as plt
 import threading
 import matplotlib.animation as animation
 from pathlib import Path
-from glob import glob
+
+# Tests #####################################################################
+def test_set_home_macro():
+  #lac1 = LAC1('/dev/ttyS0', 19200, silent=False)
+  lac1 = LAC1('COM3', 19200, silent=False)
+  lac1.set_home_macro(force=True)
+  lac1.home()
+  p = lac1.get_position_enc()
+  print(p)
+  #assert abs(p) <= 10, p
+
+def test_home():
+  lac1 = LAC1('COM3', 19200, silent=False)
+  lac1.home()
+  p = lac1.get_position_enc()
+  print(p)
+  #assert abs(p) <= 10, p
 
 
 def constant_force(user_input_target_grams):
 
-    #Adjustable variables for this load mode
-    force_hold_time = 20       #How long to hold to keep applying pressure after the target pressure is achieved for the first time (as identified by moving average)
-    enter_target_pressure_grams = user_input_target_grams   #Target pressure for load mode; identified by moving average
+  #Adjustable variables for this load mode
+  force_hold_time = 20       #How long to hold to keep applying pressure after the target pressure is achieved for the first time (as identified by moving average)
+  enter_target_pressure_grams = user_input_target_grams   #Target pressure for load mode; identified by moving average
 
 
 
 
-    target_pressure_grams = ((enter_target_pressure_grams-40)) #the -40 is to account for the weight of the load cell itself, which is not registered in these readings.
+  target_pressure_grams = ((enter_target_pressure_grams-40)) #the -40 is to account for the weight of the load cell itself, which is not registered in these readings.
 
-    force_error_percent = 0.03   #This is the % difference from target force that will yeild no movement in the actuator (i.e. will be ignored) when the moving average is calculated
-    error_percent_for_adjust_motor = 0.80   #Once the force is within this percentage of the target force, the actuator movements will be decreased to 'adjust motor step' (see below)
+  force_error_percent = 0.03   #This is the % difference from target force that will yeild no movement in the actuator (i.e. will be ignored) when the moving average is calculated
+  error_percent_for_adjust_motor = 0.80   #Once the force is within this percentage of the target force, the actuator movements will be decreased to 'adjust motor step' (see below)
 
-    #Variables for moving average
-    loop_number = 0   #Used to run code & write to the moving average; *Do not adjust*
-    size_of_moving_average = 2   #How many data points in the moving average *Adjust this value* Note that for constant force, this value should be relatively low (when compared to the target threshold and hold position) since the movement of the actuator will be based on this and should move dynamically with changes in force
-    running_total_force = [0]*size_of_moving_average  #This is to create a list with # of elements = moving average
+  #Variables for moving average
+  loop_number = 0   #Used to run code & write to the moving average; *Do not adjust*
+  size_of_moving_average = 2   #How many data points in the moving average *Adjust this value* Note that for constant force, this value should be relatively low (when compared to the target threshold and hold position) since the movement of the actuator will be based on this and should move dynamically with changes in force
+  running_total_force = [0]*size_of_moving_average  #This is to create a list with # of elements = moving average
 
-    #Variables for running this load mode *Do not adjust*
-    time_under = True   #While this is true, the actuator will be holding pressure, reading, and writing data; this becomes false when the test time reaches its limit (this is in the code)
-    force_converted = 0   #Defining a variable outside of the load mode loop, set to 0 by default
-    load_mode_start_time = 9999999999999999999  #This is set to 0 to trigger an if loop later in the code
+  #Variables for running this load mode *Do not adjust*
+  time_under = True   #While this is true, the actuator will be holding pressure, reading, and writing data; this becomes false when the test time reaches its limit (this is in the code)
+  force_converted = 0   #Defining a variable outside of the load mode loop, set to 0 by default
+  load_mode_start_time = 9999999999999999999  #This is set to 0 to trigger an if loop later in the code
 
 
   while (time_under):
@@ -267,7 +282,6 @@ def multiple_crush(user_input_target_grams, user_input_number_of_crushes, user_i
 
   return 0
 
-
 # Calibration curve July 18, 2017
 # 0 - 248
 # 200 - 294
@@ -278,40 +292,33 @@ def multiple_crush(user_input_target_grams, user_input_number_of_crushes, user_i
 # 1200 - 525
 # R^2 = 1
 
+lac1 = LAC1('COM3', 19200, silent=False)
 
-filename = "Patient1/constant_force300g.csv"
-port = 'COM3'
-filepath = Path(file_name)
+def MODIFY_FILE_NAME_AND_PATH_HERE():
+  a=1
+  return 0
 
+file_name = "Patient1/constant_force300g.csv"
 
+my_file = Path(file_name)
+if my_file.is_file():
+  input("File exists, are you sure you want to continue?")
+  input("Are you CERTAIN you want to OVERWRITE this file?")
+else:
+  print("File does not exist, creating file.")
 
-lac1 = LAC1(port)
+write_file = open(file_name,'w',newline='')
+writer = csv.writer(write_file)
 
+lac1.sendcmds('RM')     #clears all macros from the controller
+lac1.sendcmds('DH0')    #Temporarily defines positional home (setting it to 0)
+#lac1.sendcmds('PM,MN,SA1000,SV100000000,SQ10000,MR-270000,GO,WS,WA500,DH0,TP')
 
-
-# Prevent overwriting of files
-if filepath.is_file():
-    matching_files = glob(filepath + '*')
-    max_version = 1
-    for file in matching_files:
-        if file == filepath:
-            continue
-        max_version = max(max_version, int(file[-6:-4]))  # assume 3 char ext
-    filepath = filepath[:-4] + f'-{max_version:02}' + filepath[-4:]
-
-with open(file_name, 'w') as file:
-
-    writer = csv.writer(file)
-
-    lac1.sendcmds('RM')     #clears all macros from the controller
-    lac1.sendcmds('DH0')    #Temporarily defines positional home (setting it to 0)
-    #lac1.sendcmds('PM,MN,SA1000,SV100000000,SQ10000,MR-270000,GO,WS,WA500,DH0,TP')
-
-    lac1.sendcmds('PM,MN,SA25000,SV1000000000,SQ10000,MR-250000,GO,WS,WA1000')    #Actuator is retracted to allow for specimen to be placed on the rig
-    lac1.sendcmds('MN,WA1000,DH0')
-    input("Press enter to start routine")
-    lac1.sendcmds('DH0')
-    lac1.sendcmds('WA2000')
+lac1.sendcmds('PM,MN,SA25000,SV1000000000,SQ10000,MR-250000,GO,WS,WA1000')    #Actuator is retracted to allow for specimen to be placed on the rig
+lac1.sendcmds('MN,WA1000,DH0')
+input("Press enter to start routine")
+lac1.sendcmds('DH0')
+lac1.sendcmds('WA2000')
 
 #lac1.sendcmds('CN1')
 
