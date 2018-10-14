@@ -54,7 +54,7 @@ class LAC1(object):
     """
 
     def __init__(self, port, baudRate=19200,
-                 silent=True, reset=True, sleepfunc=None):
+                 silent=True, reset=False, sleepfunc=None):
         """
         If silent is True, then no debugging output will be printed.
 
@@ -65,10 +65,10 @@ class LAC1(object):
 
         # Store commands to chain together when communication latency
         # is a concern
-        self.chain_cmds = []
+        self._chain_cmds = []
 
         # Store last known position for travel range checking
-        self.current_pos_enc = None
+        self._current_pos_enc = None
 
         if sleepfunc is not None:
             self._sleepfunc = sleepfunc
@@ -89,7 +89,8 @@ class LAC1(object):
 
         # Reset then setup initial parameters
         if reset:
-            self.sendcmds('RM,RT')
+            self.sendcmds('RM,RT', wait=False)
+            self._sleepfunc(5)  # wait 5 sec for reset
         self.sendcmds('EF', wait=False)
         self.sendcmds(
             'SS', SS,
@@ -100,12 +101,7 @@ class LAC1(object):
             'SE', SE,
             'RI', RI,
             'FR', FR)
-
-        # Set safe initial movement rates in mm/s, mm/s2
-        self.set_max_velocity(1)
-        self.set_max_acceleration(1)
-
-        # TODO neeed test?
+        self.set_mode(mode='safe')  # initial movement rates
         print(f'Successfully connected to LAC-1 on {port} ({baudRate})!')
 
     # Communication methods
@@ -130,7 +126,7 @@ class LAC1(object):
         allowedtimeouts = int(30 / self._port.timeout)
 
         while not done:
-            c = self._port.read().decode("utf-8")
+            c = self._port.read().decode('utf-8')
             if c == '\n':
                 continue
             elif c == '\r':
@@ -199,14 +195,15 @@ class LAC1(object):
                     arg = ''
                 cmds.append(cmd + arg)
 
-        if self.chain_cmds:
+        if self._chain_cmds:
             # Add the stored chain commands to send
-            cmds = self.chain_cmds + cmds
+            cmds = self._chain_cmds + cmds
 
         if chain:
-            self.chain_cmds = cmds
+            self._chain_cmds = cmds
             return
 
+        # Send commands over serial connection
         now = time.time()
         if self._last_serial_send_time is not None:
             dt = now - self._last_serial_send_time
@@ -227,7 +224,7 @@ class LAC1(object):
         self._port.write(bytearray(tosend + '\r', 'utf-8'))
 
         # Reset chain cmds
-        self.chain_cmds = []
+        self._chain_cmds = []
 
         datalines = []
         if wait:
@@ -240,7 +237,7 @@ class LAC1(object):
                     if callback is not None:
                         callback(line)
                     datalines.append(line)
-                return datalines
+            return datalines
         else:
             # Enforce delay only if we didn't wait for a response
             self._last_serial_send_time = now
@@ -280,8 +277,8 @@ class LAC1(object):
     def set_max_velocity(self, mmpersecond, **kwargs):
         self.sendcmds('SV', KV * mmpersecond, **kwargs)
 
-    def set_max_acceleration(self, mmpersecondpersecond, **kwargs):
-        self.sendcmds('SA', KA * mmpersecondpersecond, **kwargs)
+    def set_max_acceleration(self, mmpersecond2, **kwargs):
+        self.sendcmds('SA', KA * mmpersecond2, **kwargs)
 
     def set_max_torque(self, q=10000, **kwargs):
         self.sendcmds('SQ', q, **kwargs)
@@ -304,11 +301,11 @@ class LAC1(object):
         self.wait(1000, for_stop=True, chain=True)
         self.sendcmds('DH0')  # store home as 0
 
-        self.current_pos_enc = self.read_position
+        self._current_pos_enc = self.read_position
         self.motor_on()
 
     def home(self):
-        if self.current_pos_enc is None:
+        if self._current_pos_enc is None:
             self.set_home()
         self.sendcmds('GH')
 
@@ -322,13 +319,13 @@ class LAC1(object):
         """
 
         # Actuator must be homed before any motion can occur
-        assert self.current_pos_enc is not None, (
+        assert self._current_pos_enc is not None, (
             "Home the actuator before attempting to move")
 
         # Check for travel range limits
         if relative:
             dist_enc = pos_enc
-            pos_enc += self.current_pos_enc
+            pos_enc += self._current_pos_enc
         assert abs(pos_enc) <= STAGE_TRAVEL_ENC, (
             'Commanded to move beyond travel limits')
         if HOME_EXTENDED:
@@ -355,8 +352,9 @@ class LAC1(object):
             self.sendcmds()
 
     def move_mm(self, pos_mm, **kwargs):
-        return (self.move_enc(pos_mm * ENC_COUNTS_PER_MM, **kwargs) /
-                ENC_COUNTS_PER_MM)
+        pos_enc = self.move_enc(pos_mm * ENC_COUNTS_PER_MM, **kwargs)
+        if pos_enc is not None:
+            return pos_enc / ENC_COUNTS_PER_MM
 
     def move_clear(self, dist_mm, **kwargs):
         """
@@ -373,7 +371,7 @@ class LAC1(object):
         Start the actuator moving in a direction at a velocity in mm/s.
         Moves toward home by default.
         """
-        assert self.current_pos_enc is not None, (
+        assert self._current_pos_enc is not None, (
             "Home the actuator before attempting to move")
 
         self.velocity_mode(chain=True)
@@ -384,6 +382,32 @@ class LAC1(object):
         self.set_direction(extend=extend, chain=True)
         self.set_max_velocity(mmpersecond, chain=True)
         self.go()
+
+    def set_mode(self, mode='safe'):
+        """
+        Set the speed, acceleration and torque limits for the mode needed.
+        Modes:
+        - safe
+        - travel
+        - crush
+        """
+        if mode == 'safe':
+            mmpersecond = 1
+            mmpersecond2 = 100
+            q = 10000
+        elif mode == 'travel':
+            mmpersecond = 75
+            mmpersecond2 = 3800
+            q = 32000
+        elif mode == 'crush':
+            mmpersecond = 6
+            mmpersecond2 = 3000
+            q = 30000
+        else:
+            return
+        self.set_max_velocity(mmpersecond, chain=True)
+        self.set_max_acceleration(mmpersecond2, chain=True)
+        self.set_max_torque(q)
 
     # Read methods
     # Warning: read methods can't be chained and will end current chains
@@ -399,8 +423,8 @@ class LAC1(object):
         """
         Returns the current position in encoder counts
         """
-        self.current_pos_enc = int(self.sendcmds('TP')[-1])
-        return self.current_pos_enc
+        self._current_pos_enc = int(self.sendcmds('TP')[-1])
+        return self._current_pos_enc
 
     def read_position_mm(self):
         """
@@ -444,8 +468,8 @@ class LAC1(object):
         Return units are position in mm and force in Newtons
         """
         raw_output = self.sendcmds('TP,TA8')
-        self.current_pos_enc = int(raw_output[-2])
-        return (self.current_pos_enc / ENC_COUNTS_PER_MM,
+        self._current_pos_enc = int(raw_output[-2])
+        return (self._current_pos_enc / ENC_COUNTS_PER_MM,
                 self.convert_force(raw_output[-1]))
 
     # Shutdown methods
