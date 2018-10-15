@@ -23,6 +23,14 @@ def connect(port):
     return rig
 
 
+def disconnect():
+    rig.set_mode('travel')
+    rig.move_clear(10, wait_for_stop=True)
+    rig.set_mode('safe')
+    rig.move_clear(0, wait_for_stop=True)
+    rig.close()
+
+
 def single_crush(target_force, target_action='stop', duration=10, multi=False):
     """
     Will execute a crush until target force is met, then will either 'stop'
@@ -107,7 +115,7 @@ def to_pressure(force, diameter=5):
     return 1000 * force / area
 
 
-# Calibration curve July 18, 2017
+# Calibration curve July 18, 2017 # TODO update
 # 0 - 248
 # 200 - 294
 # 300 - 317
@@ -117,33 +125,45 @@ def to_pressure(force, diameter=5):
 # 1200 - 525
 # R^2 = 1
 
+# TODO add GUI interface
 
-port = '/dev/tty.usbserial-FTV98A40'
 start_height = 20  # mm
+protocol_names = ('stop', 'hold', 'multi_stop', 'long_stop')
+
+# port = '/dev/tty.usbserial-FTV98A40'
+port = input('Input connection port name to connect: ').strip()
 rig = connect(port)
 
-# TODO add user input functionality
-protocol = 0
-protocol_names = ('stop', 'hold', 'multi')
-target_weight = 300  # grams
+protocol = input('\n- '.join(['Select a protocol', *protocol_names]) +
+                 '\n: ').strip().lower()
+assert protocol in protocol_names, 'Invalid protocol input'
+
+target_weight = float(input('Input target load in grams: '))
 target_force = to_force(target_weight)
-filename = f"/{protocol_names[protocol]}-{target_weight}g.csv"
-filepath = Path(filename)
+
+# Select file to write csv data
+print('Storing crush data in current directory')
+filename = f"{protocol_names[protocol]}-{target_weight}g.csv"
+filepath = Path.cwd().joinpath(filename)
 
 # Prevent overwriting of files
 if filepath.is_file():
-    matching_files = glob(filepath.stem + '*')
+    path_no_suffix = str(Path.joinpath(filepath.parent, filepath.stem)) + '*'
+    matching_files = glob(path_no_suffix)
     max_version = 1
     for file in matching_files:
-        if file == filepath:
+        if file == str(filepath):
             continue
         max_version = max(max_version, int(Path(file).stem[-2:]))
-    filepath = Path(filepath.stem + f'-{max_version + 1:02}' + filepath.suffix)
+    filepath = Path.cwd().joinpath(filepath.stem + f'-{(max_version + 1):02}' +
+                                   filepath.suffix)
 
 with filepath.open('w', newline='') as file:
     writer = csv.writer(file)
 
-    input("Press enter to start test protocol")
+    cmd = input("Press enter to run protocol or 'x' to exit: ")
+    if cmd.strip().lower() == 'x':
+        exit()
 
     if protocol_names[protocol] == 'stop':
         data = single_crush(target_force, target_action='stop')
@@ -151,8 +171,11 @@ with filepath.open('w', newline='') as file:
     elif protocol_names[protocol] == 'hold':
         data = single_crush(target_force, target_action='hold')
 
-    elif protocol_names[protocol] == 'multi':
+    elif protocol_names[protocol] == 'multi_stop':
         data = multi_crush(target_force, target_action='stop')
+
+    elif protocol_names[protocol] == 'long_stop':
+        data = single_crush(target_force, target_action='stop', duration=60)
 
     writer.writerow(('Timestamp (s)', 'Position (mm)', 'Force (N)',
                      'Torque', 'Target Met'))

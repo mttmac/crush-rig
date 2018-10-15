@@ -5,7 +5,6 @@
 # Forked from https://github.com/freespace/smac-lac-1
 
 
-import os
 import serial
 import time
 
@@ -33,7 +32,7 @@ FR = 1
 # Time to wait for actuator to stop in ms.
 WS_PERIOD_MS = 25
 # LAC-1 manual recommends a small delay of 100 ms after sending commands
-SERIAL_SEND_WAIT_SEC = 0.1
+SERIAL_SEND_WAIT_SEC = 0.1  # TODO need to be faster?
 # Each line cannot exceed 127 characters as per LAC-1 manual
 SERIAL_MAX_LINE_LENGTH = 127
 
@@ -77,7 +76,10 @@ class LAC1(object):
         self._silent = silent
 
         print(f'Connecting to LAC-1 on {port} ({baudRate})')
-        port = os.environ.get('LAC1_PORT', port)
+        port_options = []
+        for option in serial.tools.list_ports.comports():
+            port_options.append(option.device)
+        assert port in port_options, 'Serial port not recognized'
         self._port = serial.Serial(
             port=port,
             baudrate=baudRate,
