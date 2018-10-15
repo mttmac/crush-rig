@@ -1,271 +1,110 @@
 #!/usr/bin/env python
 
-# Written by Matt MacDonald & Sachin Doshi
+# Written by Matt MacDonald
 # For CIGITI at the Hospital for Sick Children Toronto
 # Tested on LCA50-025-72F actuator
 
 
 import csv
-import matplotlib.pyplot as plt
-import threading
-import matplotlib.animation as animation
+import time
 from pathlib import Path
 from glob import glob
-
-
-def constant_force(user_input_target_grams):
-
-    #Adjustable variables for this load mode
-    force_hold_time = 20       #How long to hold to keep applying pressure after the target pressure is achieved for the first time (as identified by moving average)
-    enter_target_pressure_grams = user_input_target_grams   #Target pressure for load mode; identified by moving average
-
-
-
-
-    target_pressure_grams = ((enter_target_pressure_grams-40)) #the -40 is to account for the weight of the load cell itself, which is not registered in these readings.
-
-    force_error_percent = 0.03   #This is the % difference from target force that will yeild no movement in the actuator (i.e. will be ignored) when the moving average is calculated
-    error_percent_for_adjust_motor = 0.80   #Once the force is within this percentage of the target force, the actuator movements will be decreased to 'adjust motor step' (see below)
-
-    #Variables for moving average
-    loop_number = 0   #Used to run code & write to the moving average; *Do not adjust*
-    size_of_moving_average = 2   #How many data points in the moving average *Adjust this value* Note that for constant force, this value should be relatively low (when compared to the target threshold and hold position) since the movement of the actuator will be based on this and should move dynamically with changes in force
-    running_total_force = [0]*size_of_moving_average  #This is to create a list with # of elements = moving average
-
-    #Variables for running this load mode *Do not adjust*
-    time_under = True   #While this is true, the actuator will be holding pressure, reading, and writing data; this becomes false when the test time reaches its limit (this is in the code)
-    force_converted = 0   #Defining a variable outside of the load mode loop, set to 0 by default
-    load_mode_start_time = 9999999999999999999  #This is set to 0 to trigger an if loop later in the code
-
-
-  while (time_under):
-
-    motor_step = 2000  #The distance in um that the actuator moves with each command sent (coordinating with the sleep time can be used to calibrate velocity)
-    #motor step of 2000 =~ 4mm/s speed
-
-    #motor_step = int(400*(1-(0.667*(force_converted/target_pressure_grams))))    #This equation adjusts actuator movements decreasingly as it approaches the target pressure (note that this also decreases velocity)
-    adjust_motor_step = 10    #Once the target force is achieved, this is the distance in um that the actuator moves each time it detects that the force on the load cell is outside of the error threshold
-
-    if (force_converted > (target_pressure_grams*error_percent_for_adjust_motor)):    #If the force is within a certain percent of the target, the actuator movements will become more fine
-      motor_step = adjust_motor_step
-
-    moving_average_force = (sum(running_total_force)/len(running_total_force))        #Calculates the moving average that will be updated via the loop below
-
-    if (moving_average_force < (target_pressure_grams*(1-force_error_percent))):      #If the moving average of force is below the target threshold then move the actuator forwards. Report force & position data.
-      #position_and_force = lac1.sendcmds('PM,SA25000,SV1000000000,SQ10000,MR%s,GO,WS,TP,TP,TA8,WA1' %(motor_step))
-      position_and_force = lac1.sendcmds('PM,SA25000,SV1000000000,SQ10000,MR%s,GO,TP,TP,TA8,WA1' %(motor_step))
-    elif (moving_average_force > (target_pressure_grams*(1+force_error_percent))):    #If the moving average of force is below the target threshold then move the actuator backwards. Report force & position data.
-      #position_and_force = lac1.sendcmds('PM,SA25000,SV1000000000,SQ10000,MR-%s,GO,WS,TP,TP,TA8,WA1' %(motor_step))
-      position_and_force = lac1.sendcmds('PM,SA25000,SV1000000000,SQ10000,MR-%s,GO,TP,TP,TA8,WA1' %(motor_step))
-
-    else: #This means that we are within the force target window                      #If the moving average of force is within the error range, then hold position. Report force & position data.
-      position_and_force = lac1.sendcmds('TP,TP,TA8,WA1')
-      if (load_mode_start_time == 9999999999999999999):
-        load_mode_start_time = time.clock() #This is when the target pressure is reached and so a timer is started; after it is set, it is no longer equal to 0 and so this loop is avoided / the clock is not reset
-
-    relative_time = (time.clock() - ref_time)
-    constant_force_time = (time.clock() - load_mode_start_time)    #This is will trigger a cut-off after X seconds of constant force
-
-    force_converted = ((4.3308*int(position_and_force[1]))-1073.1) #Formula used to convert sensor data into grams/Newtons/kPa (predetermined and calibrated using the sensor), currently in GRAMS *Do not adjust this formula*
-    data = [relative_time,position_and_force[0],force_converted]
-    writer.writerow(data)
-
-    #Recording data to the moving average and moving to the next index for the next data point
-    running_total_force[(loop_number%size_of_moving_average)] = force_converted
-    loop_number += 1
-
-    if (constant_force_time>force_hold_time):
-      data =["Constant force achieved at ",str(relative_time - force_hold_time),("time %s s, grams %s g, force error percent: %s, mvg_avg %s, motor step %s, adjust motor step %s, cutoff for adjust motor step rate at %s percent." %(force_hold_time,target_pressure_grams, force_error_percent, size_of_moving_average,motor_step,adjust_motor_step,error_percent_for_adjust_motor))]
-      writer.writerow(data)
-      time_under = False
-      lac1.sendcmds('PM,SA25000,SV1000000000,SQ10000,MR-270000,GO')
-
-  return 0
-
-
-
-def constant_position(user_input_target_grams):
-
-  #Adjustable variables for this load mode
-  position_hold_time = 20       #How long to hold a position after the desired force has been met
-  enter_target_pressure_grams = user_input_target_grams   #Target pressure for load mode; identified by moving average
-
-
-
-
-  target_pressure_grams = ((enter_target_pressure_grams-40)-(enter_target_pressure_grams*.05)) #the -40 is to account for the weight of the load cell itself, which is not registered in these readings. The subtraction of 5% of the end target pressure is in place to reduce when movement is cut off, which will reduce the pressure overshoot
-
-  #Variables for moving average
-  loop_number = 0   #Used to run code & write to the moving average; *Do not adjust*
-  size_of_moving_average = 1   #How many data points in the moving average *Adjust this value*
-  running_total_force = [0]*size_of_moving_average  #This is to create a list with # of elements = moving average
-
-  #Variables for running this load mode *Do not adjust*
-  time_under = True   #While this is true, the actuator will be holding pressure, reading, and writing data
-  force_converted = 0   #Defining a variable outside of the load mode loop, set to 0 by default
-  push_forward = True #While this is true, the actuator has not reached the target pressure and will continue to move down
-  load_mode_start_time = 9999999999999999999  #This is set to 0 to trigger an if loop later in the code
-
-  while (time_under):
-
-    motor_step = 2500  #3000 =~ 4.5mm/s; 2500 =~4.00mm/s
-    #motor_step = int(4000*(1-(0.667*(force_converted/target_pressure_grams))))
-
-    if (force_converted > (target_pressure_grams*0.90)):
-      motor_step = 100
-
-    moving_average_force = (sum(running_total_force)/len(running_total_force))
-    if (moving_average_force > target_pressure_grams):
-      push_forward = False  #The target pressure (via moving average) has been reached so the actuator will now be locked in place for the duration of the test
-
-      if(load_mode_start_time == 9999999999999999999):
-        lac1.sendcmds('PM,SA25000,SV1000000000,SQ10000,MR50,GO')
-        load_mode_start_time = time.clock() #This is when the target pressure is reached and so a timer is started
-
-    #Once the desired pressure is achieved, as determined by the moving average, actuator motion stops and only position/force data are measured
-    if push_forward:
-      #position_and_force = lac1.sendcmds('PM,SA25000,SV1000000000,SQ10000,MR%s,GO,WS,TP,TP,TA8,WA5' %(motor_step))
-      position_and_force = lac1.sendcmds('PM,SA25000,SV1000000000,SQ10000,MR%s,GO,TP,TP,TA8,WA5' %(motor_step))
-    else:
-      position_and_force = lac1.sendcmds('MN,TP,TP,TA8,WA5')
-
-    constant_position_time = (time.clock() - load_mode_start_time)    #This is for cut-off after X seconds of constant position
-    relative_time = (time.clock() - ref_time)               #This is for time logging purposes
-
-    force_converted = ((4.3308*int(position_and_force[1]))-1073.1) #Formula used to convert sensor data into grams/Newtons/kPa (predetermined and calibrated using the sensor), currently in GRAMS *Do not adjust this formula*
-    data = [relative_time,position_and_force[0],force_converted]
-    writer.writerow(data)   #Recording data
-
-    #Recording data to the moving average and moving to the next index for the next data point
-    running_total_force[(loop_number%size_of_moving_average)] = force_converted
-    loop_number += 1
-
-
-    if (constant_position_time>position_hold_time):
-      data =["Constant force achieved at ",str(relative_time - position_hold_time),("time %s s, grams %s g, mvg_avg %s, motor step %s. USED FLAT HEAD, not jaw geometry" %(position_hold_time,target_pressure_grams,size_of_moving_average, motor_step))]
-      writer.writerow(data)
-      time_under = False
-      lac1.sendcmds('PM,SA25000,SV1000000000,SQ10000,MR-270000,GO')
-
-  return 0
-
-
-
-def multiple_crush(user_input_target_grams, user_input_number_of_crushes, user_input_time_per_crush,user_input_time_between_crushes):
-
-  #Adjustable variables for this load mode
-  enter_target_pressure_grams = user_input_target_grams   #Target pressure for load mode; identified by moving average
-  number_of_crushes = user_input_number_of_crushes     #Number of repeat crushes
-  time_per_crush = user_input_time_per_crush       #How long to hold a position after the desired force has been met
-  time_between_crushes = user_input_time_between_crushes #Number of seconds released before re-crushing the tissue
-
-
-
-
-
-  target_pressure_grams = ((enter_target_pressure_grams-40)-(enter_target_pressure_grams*.05)) #the -40 is to account for the weight of the load cell itself, which is not registered in these readings. The subtraction of 5% of the end target pressure is in place to reduce when movement is cut off, which will reduce the pressure overshoot
-
-  #Variables for moving average
-  loop_number = 0   #Used to run code & write to the moving average; *Do not adjust*
-  size_of_moving_average = 1   #How many data points in the moving average *Adjust this value*
-  running_total_force = [0]*size_of_moving_average  #This is to create a list with # of elements = moving average
-
-  #Variables for running this load mode *Do not adjust*
-  time_under = True   #While this is true, the actuator will be holding pressure, reading, and writing data
-  force_converted = 0   #Defining a variable outside of the load mode loop, set to 0 by default
-  push_forward = True #While this is true, the actuator has not reached the target pressure and will continue to move down
-  load_mode_start_time = 9999999999999999999  #This is set to n to trigger an if loop later in the code
-  number_of_crushes_remaining = number_of_crushes #Used to interate through the number of crushes
-  data_bank = []   #Used to store then print 'constant position acheived at'
-
-  while (time_under):
-
-    motor_step = 3000
-    #motor_step = int(400*(1-(0.667*(force_converted/target_pressure_grams))))
-
-    if (force_converted > (target_pressure_grams*0.80)):
-      motor_step = 25
-
-    moving_average_force = (sum(running_total_force)/len(running_total_force))
-    if (moving_average_force > target_pressure_grams):
-      push_forward = False  #The target pressure (via moving average) has been reached so the actuator will now be locked in place for the duration of the test
-
-      if(load_mode_start_time == 9999999999999999999):
-        load_mode_start_time = time.clock() #This is when the target pressure is reached and so a timer is started
-
-    #Once the desired pressure is achieved, as determined by the moving average, actuator motion stops and only position/force data are measured
-    if push_forward:
-      #position_and_force = lac1.sendcmds('PM,SA20000,SV100000000,SQ15000,MR%s,GO,WS,TP,TP,TA8,WA5' %(motor_step))
-      position_and_force = lac1.sendcmds('PM,SA20000,SV100000000,SQ15000,MR%s,GO,TP,TP,TA8,WA5' %(motor_step))
-
-    else:
-      position_and_force = lac1.sendcmds('MN,TP,TP,TA8,WA1')
-
-    constant_position_time = (time.clock() - load_mode_start_time)    #This is for cut-off after X seconds of constant position
-    relative_time = (time.clock() - ref_time)               #This is for time logging purposes
-
-    force_converted = ((4.3308*int(position_and_force[1]))-1073.1) #Formula used to convert sensor data into grams/Newtons/kPa (predetermined and calibrated using the sensor), currently in GRAMS *Do not adjust this formula*
-    data = [relative_time,position_and_force[0],force_converted]
-    writer.writerow(data)   #Recording data
-
-    #Recording data to the moving average and moving to the next index for the next data point
-    running_total_force[(loop_number%size_of_moving_average)] = force_converted
-    loop_number += 1
-
-
-    if (constant_position_time>time_per_crush):
-      number_of_crushes_remaining += (-1)
-
-      if(number_of_crushes_remaining > 0):
-        load_mode_start_time = 9999999999999999999
-        data_bank.append(str(relative_time - time_per_crush))
-        lac1.sendcmds('PM,SA25000,SV50000000,SQ10000,MR-35000,GO')
-
-        time_off_sample = time.clock()
-        time_off_sample_under = True
-
-        while(time_off_sample_under):
-          if((time.clock() - time_off_sample) > (time_between_crushes-1)):
-            time_off_sample_under = False
-          position_and_force = lac1.sendcmds('MN,TP,TP,TA8,WA1')
-          relative_time = (time.clock() - ref_time)
-          force_converted = ((4.3308*int(position_and_force[1]))-1073.1)
-          running_total_force[(loop_number%size_of_moving_average)] = force_converted
-          loop_number += 1
-          data = [relative_time,position_and_force[0],force_converted]
-          writer.writerow(data)
-
-        time_off_sample = 9999999999999999999
-        push_forward = True
-
-      else:
-        lac1.sendcmds('PM,SA25000,SV1000000000,SQ10000,MR-15000,GO')
-        time_off_sample = time.clock()
-        time_off_sample_under = True
-
-        while(time_off_sample_under):
-          if((time.clock() - time_off_sample) > (time_between_crushes-1)):
-            time_off_sample_under = False
-          position_and_force = lac1.sendcmds('MN,TP,TP,TA8,WA1')
-          relative_time = (time.clock() - ref_time)
-          force_converted = ((4.3308*int(position_and_force[1]))-1073.1)
-          running_total_force[(loop_number%size_of_moving_average)] = force_converted
-          loop_number += 1
-          data = [relative_time,position_and_force[0],force_converted]
-          writer.writerow(data)
-
-        time_string = "Constant positions achieved at: "
-
-        for desired_time in data_bank:
-          time_string = (time_string + desired_time + ", ")
-
-        time_string = (time_string + "and " + str(relative_time - time_per_crush))
-        data =[time_string,"Crush settings info:",("time %s s, grams %s g, mvg_avg %s, motor step %s, time of crush %s s, time between crushes %s s, USED FLAT HEAD not jaw geometry." %(time_per_crush,target_pressure_grams,size_of_moving_average, motor_step,time_per_crush,time_between_crushes))]
-        writer.writerow(data)
-        time_under = False
-        lac1.sendcmds('PM,SA25000,SV1000000000,SQ10000,MR-270000,GO')
-
-  return 0
+from math import pi
+from lac1 import LAC1
+from collections import deque
+from threading import Timer
+
+
+def connect(port):
+    rig = LAC1(port, reset=True)
+    rig.home()
+    rig.set_mode('travel')
+    rig.move_clear(start_height)
+    return rig
+
+
+def single_crush(target_force, target_action='stop', duration=10, multi=False):
+    """
+    Will execute a crush until target force is met, then will either 'stop'
+    or 'hold' for duration. Logs data throughout until returned to start.
+    """
+
+    # TODO do I need to adjust for the hanging force of the sensor?
+
+    data = []
+    window = 10
+    forces = deque(maxlen=window)
+    pos_margin = 0.1  # mm
+
+    # rig is at start height prior to protocol
+    rig.set_mode('crush')
+    start_pos = rig.read_position_mm()
+    rig.move_const_vel(toward_home=True)
+
+    timer = Timer(duration, rig.move_clear(start_height))
+    target_met = False
+    done = False
+    while not done:
+        samples = rig.read_pos_and_force()
+
+        if not target_met:
+            forces.append(samples[1])
+            if (sum(forces) / window) >= target_force:
+                if target_action == 'stop':
+                    rig.stop(wait=False)
+                elif target_action == 'hold':
+                    rig.move_const_torque(samples[2])
+
+                target_met = True
+                target_time = time.time()
+                timer.start()
+
+        else:
+            if abs(samples[0] - start_pos) < pos_margin:
+                done = True
+
+        data.append((time.time(), *samples, target_met))
+
+    if multi:
+        return data, target_time
+    return data
+
+
+def multi_crush(target_force, num_crushes=5, target_action='stop',
+                duration=10, duty_cycle=0.5):
+    """
+    Will execute a number of crushes at a set duty cycle, will either 'stop'
+    or 'hold' for duration once target force achieved. Logs data throughout.
+    """
+
+    pause = duration * ((1 - duty_cycle) / duty_cycle)
+    data = []
+    for i in range(num_crushes):
+        new_data, last_target_time = single_crush(target_force, target_action,
+                                                  duration, multi=True)
+        data += new_data
+
+        if i == num_crushes - 1:
+            continue
+        time.sleep(min(duration + pause - (time.time() - last_target_time), 0))
+
+    return data
+
+
+def to_force(weight):
+    """
+    Converts weight in grams to force in N at standard earth gravity.
+    """
+    return 9.81 * weight / 1000
+
+
+def to_pressure(force, diameter=5):
+    """
+    Converts force reading in N to pressure in kPa based on a circular
+    diameter in mm. Default diameter is 5 mm.
+    """
+    area = pi * (diameter / 2) ** 2
+    return 1000 * force / area
 
 
 # Calibration curve July 18, 2017
@@ -279,56 +118,42 @@ def multiple_crush(user_input_target_grams, user_input_number_of_crushes, user_i
 # R^2 = 1
 
 
-filename = "Patient1/constant_force300g.csv"
-port = 'COM3'
-filepath = Path(file_name)
+port = '/dev/tty.usbserial-FTV98A40'
+start_height = 20  # mm
+rig = connect(port)
 
-
-
-lac1 = LAC1(port)
-
-
+# TODO add user input functionality
+protocol = 0
+protocol_names = ('stop', 'hold', 'multi')
+target_weight = 300  # grams
+target_force = to_force(target_weight)
+filename = f"/{protocol_names[protocol]}-{target_weight}g.csv"
+filepath = Path(filename)
 
 # Prevent overwriting of files
 if filepath.is_file():
-    matching_files = glob(filepath + '*')
+    matching_files = glob(filepath.stem + '*')
     max_version = 1
     for file in matching_files:
         if file == filepath:
             continue
-        max_version = max(max_version, int(file[-6:-4]))  # assume 3 char ext
-    filepath = filepath[:-4] + f'-{max_version:02}' + filepath[-4:]
+        max_version = max(max_version, int(Path(file).stem[-2:]))
+    filepath = Path(filepath.stem + f'-{max_version + 1:02}' + filepath.suffix)
 
-with open(file_name, 'w') as file:
-
+with filepath.open('w', newline='') as file:
     writer = csv.writer(file)
 
-    lac1.sendcmds('RM')     #clears all macros from the controller
-    lac1.sendcmds('DH0')    #Temporarily defines positional home (setting it to 0)
-    #lac1.sendcmds('PM,MN,SA1000,SV100000000,SQ10000,MR-270000,GO,WS,WA500,DH0,TP')
+    input("Press enter to start test protocol")
 
-    lac1.sendcmds('PM,MN,SA25000,SV1000000000,SQ10000,MR-250000,GO,WS,WA1000')    #Actuator is retracted to allow for specimen to be placed on the rig
-    lac1.sendcmds('MN,WA1000,DH0')
-    input("Press enter to start routine")
-    lac1.sendcmds('DH0')
-    lac1.sendcmds('WA2000')
+    if protocol_names[protocol] == 'stop':
+        data = single_crush(target_force, target_action='stop')
 
-#lac1.sendcmds('CN1')
+    elif protocol_names[protocol] == 'hold':
+        data = single_crush(target_force, target_action='hold')
 
+    elif protocol_names[protocol] == 'multi':
+        data = multi_crush(target_force, target_action='stop')
 
-ref_time = time.clock()   #This is the time at which the load case begins
-
-def MODIFY_LOAD_MODE_BELOW():
-  a = 1
-  #options:
-  #constant_force(target grams) ;;
-  #constant_position(target grams) ;;
-  #multiple_crush(target grams, number of crushes, time crushing (in sec), time between crushes (in sec))
-  return 0
-
-#AMY MODIFY THIS BELOW:
-constant_force(300)
-#constant_position(400)
-#multiple_crush(500,5,10,10,10)
-
-write_file.close()
+    writer.writerow(('Timestamp (s)', 'Position (mm)', 'Force (N)',
+                     'Torque', 'Target Met'))
+    writer.writerows(data)

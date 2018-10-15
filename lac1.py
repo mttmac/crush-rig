@@ -8,7 +8,6 @@
 import os
 import serial
 import time
-from math import pi
 
 
 # Constants for LCA50-025-72F actuator, change for alternative actuators
@@ -366,10 +365,10 @@ class LAC1(object):
             dist_mm = abs(dist_mm)
         return self.move_mm(dist_mm, **kwargs)
 
-    def move_const_vel(self, mmpersecond, toward_home=True):
+    def move_const_vel(self, mmpersecond=None, toward_home=True):
         """
         Start the actuator moving in a direction at a velocity in mm/s.
-        Moves toward home by default.
+        Moves toward home at max velocity by default.
         """
         assert self._current_pos_enc is not None, (
             "Home the actuator before attempting to move")
@@ -380,7 +379,8 @@ class LAC1(object):
         else:
             extend = not HOME_EXTENDED
         self.set_direction(extend=extend, chain=True)
-        self.set_max_velocity(mmpersecond, chain=True)
+        if mmpersecond is not None:
+            self.set_max_velocity(mmpersecond, chain=True)
         self.go(wait=False)
 
     def move_const_torque(self, torque, **kwargs):
@@ -417,6 +417,7 @@ class LAC1(object):
             q = 30000
         else:
             return
+        self.position_mode(chain=True)
         self.set_max_velocity(mmpersecond, chain=True)
         self.set_max_acceleration(mmpersecond2, chain=True)
         self.set_max_torque(q)
@@ -490,19 +491,11 @@ class LAC1(object):
         """
         return 1000 * self.read_force() / 9.81
 
-    def read_pressure(self, pin_diameter=5):
-        """
-        Converts force reading to pressure in kPa based on a circular pin
-        diameter in mm. Default pin diameter is 5 mm.
-        """
-        area = pi * (pin_diameter / 2) ** 2
-        return 1000 * self.read_force() / area
-
-    def read_pos_and_force(self, channel=0):
+    def read_pos_and_force(self):
         """
         Combines two simultaneous reads: position and force, to allow chaining.
         Torque is also read as an indirect metric of force (units arbitrary).
-        Return units are position in mm and force in Newtons
+        Return units are position in mm and force in N.
         """
         raw_output = self.sendcmds('TP,TA8,TQ')
         self._current_pos_enc = int(raw_output[-3])
