@@ -131,7 +131,7 @@ start_height = 20  # mm
 protocol_names = ('stop', 'hold', 'multi_stop', 'long_stop')
 
 # port = '/dev/tty.usbserial-FTV98A40'
-port = input('Input connection port name to connect: ').strip()
+port = input('Input serial port name to connect: ').strip()
 rig = connect(port)
 
 protocol = input('\n- '.join(['Select a protocol', *protocol_names]) +
@@ -143,7 +143,7 @@ target_force = to_force(target_weight)
 
 # Select file to write csv data
 print('Storing crush data in current directory')
-filename = f"{protocol_names[protocol]}-{target_weight}g.csv"
+filename = f"{protocol}-{target_weight}g.csv"
 filepath = Path.cwd().joinpath(filename)
 
 # Prevent overwriting of files
@@ -165,16 +165,16 @@ with filepath.open('w', newline='') as file:
     if cmd.strip().lower() == 'x':
         exit()
 
-    if protocol_names[protocol] == 'stop':
+    if protocol == 'stop':
         data = single_crush(target_force, target_action='stop')
 
-    elif protocol_names[protocol] == 'hold':
+    elif protocol == 'hold':
         data = single_crush(target_force, target_action='hold')
 
-    elif protocol_names[protocol] == 'multi_stop':
+    elif protocol == 'multi_stop':
         data = multi_crush(target_force, target_action='stop')
 
-    elif protocol_names[protocol] == 'long_stop':
+    elif protocol == 'long_stop':
         data = single_crush(target_force, target_action='stop', duration=60)
 
     writer.writerow(('Timestamp (s)', 'Position (mm)', 'Force (N)',

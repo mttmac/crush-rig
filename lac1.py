@@ -5,8 +5,9 @@
 # Forked from https://github.com/freespace/smac-lac-1
 
 
-import serial
 import time
+from serial import Serial
+from serial.tools import list_ports
 
 
 # Constants for LCA50-025-72F actuator, change for alternative actuators
@@ -77,10 +78,10 @@ class LAC1(object):
 
         print(f'Connecting to LAC-1 on {port} ({baudRate})')
         port_options = []
-        for option in serial.tools.list_ports.comports():
+        for option in list_ports.comports():
             port_options.append(option.device)
         assert port in port_options, 'Serial port not recognized'
-        self._port = serial.Serial(
+        self._port = Serial(
             port=port,
             baudrate=baudRate,
             bytesize=8,
