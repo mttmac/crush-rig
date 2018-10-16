@@ -33,7 +33,7 @@ FR = 1
 # Time to wait for actuator to stop in ms.
 WS_PERIOD_MS = 25
 # LAC-1 manual recommends a small delay of 100 ms after sending commands
-SERIAL_SEND_WAIT_SEC = 0.1  # TODO need to be faster?
+SERIAL_SEND_WAIT_SEC = 0.100  # TODO need to be faster?
 # Each line cannot exceed 127 characters as per LAC-1 manual
 SERIAL_MAX_LINE_LENGTH = 127
 

@@ -69,6 +69,7 @@ def single_crush(target_force, target_action='stop', duration=10, multi=False):
                 stage = 1
 
         elif stage == 1 and (time.time() - target_time) >= duration:
+            rig.set_mode('crush')
             rig.move_clear(start_height)
             stage = 2
 
@@ -90,7 +91,7 @@ def multi_crush(target_force, num_crushes=5, target_action='stop',
     or 'hold' for duration once target force achieved. Logs data throughout.
     """
 
-    pause = duration * ((1 - duty_cycle) / duty_cycle)
+    pause = duration * ((1 - duty_cycle) / duty_cycle)  # TODO I don't think this is workign right, too short
     data = []
     for i in range(num_crushes):
         new_data, last_target_time = single_crush(target_force, target_action,
@@ -140,7 +141,7 @@ pos_margin = 0.1  # mm
 protocol_names = ('stop', 'hold', 'multi_stop', 'long_stop')
 
 # Connect to rig if not already connected
-try:
+try:  # TODO this is not working in Anaconda, different namespace
     rig
 except NameError:
     port = input('Input serial port name to connect: ').strip()
