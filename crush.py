@@ -36,6 +36,10 @@ def disconnect(rig):
     rig.close()
 
 
+def invert(var):
+    var = -var
+
+
 def single_crush(target_force, target_action='stop', duration=10, multi=False):
     """
     Will execute a crush until target force is met, then will either 'stop'
@@ -53,13 +57,13 @@ def single_crush(target_force, target_action='stop', duration=10, multi=False):
     start_pos = rig.read_position_mm()
     rig.move_const_vel(toward_home=True)
 
-    timer = Timer(duration, rig.move_clear, [start_height])
-    target_met = False
+    stage = 0  # 0 for crush, 1 for action, 2 for release
+    timer = Timer(duration, invert, [stage])
     done = False
     while not done:
         samples = rig.read_pos_and_force()
 
-        if not target_met:
+        if stage == 0:
             forces.append(samples[1])
             if (sum(forces) / window) >= target_force:
                 if target_action == 'stop':
@@ -67,15 +71,19 @@ def single_crush(target_force, target_action='stop', duration=10, multi=False):
                 elif target_action == 'hold':
                     rig.move_const_torque(samples[2])
 
-                target_met = True
+                stage = 1
                 target_time = time.time()
                 timer.start()
 
-        else:
+        elif stage == -1:
+            rig.move_clear(start_height)
+            stage = 2
+
+        elif stage == 2:
             if abs(samples[0] - start_pos) < pos_margin:
                 done = True
 
-        data.append((time.time(), *samples, target_met))
+        data.append((time.time(), *samples, stage))
 
     if multi:
         return data, target_time
@@ -130,7 +138,7 @@ def to_pressure(force, diameter=5):
 # R^2 = 1
 
 # TODO add GUI interface
-# mac port /dev/cu.usbserial-FTV98A40
+# mac serial port: /dev/cu.usbserial-FTV98A40
 
 debug = True  # turns silent false
 start_height = 20  # mm
@@ -191,5 +199,5 @@ with filepath.open('w', newline='') as file:
         data = single_crush(target_force, target_action='stop', duration=60)
 
     writer.writerow(('Timestamp (s)', 'Position (mm)', 'Force (N)',
-                     'Torque', 'Target Met'))
+                     'Torque', 'Stage'))
     writer.writerows(data)
