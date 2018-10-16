@@ -15,19 +15,20 @@ from collections import deque
 from threading import Timer
 
 
-def connect(port):
-    rig = LAC1(port, reset=True)
-    prep()
+def connect(port, silent=True):
+    rig = LAC1(port, silent=silent, reset=True)
+    prep(rig)
     return rig
 
 
-def prep():
+def prep(rig):
     rig.home()
-    rig.set_mode('travel')
+    rig.wait(for_stop=True, chain=True)
+    rig.set_mode('travel', chain=True)
     rig.move_clear(start_height)
 
 
-def disconnect():
+def disconnect(rig):
     rig.set_mode('travel')
     rig.move_clear(5, wait_for_stop=True)
     rig.set_mode('safe')
@@ -51,16 +52,12 @@ def single_crush(target_force, target_action='stop', duration=10, multi=False):
     rig.set_mode('crush')
     start_pos = rig.read_position_mm()
     rig.move_const_vel(toward_home=True)
-    time.sleep(0.1)
 
-    timer = Timer(duration, rig.move_clear(start_height))
+    timer = Timer(duration, rig.move_clear, [start_height])
     target_met = False
     done = False
     while not done:
         samples = rig.read_pos_and_force()
-        if samples is None:
-            print('debug')  # TODO remove
-            continue
 
         if not target_met:
             forces.append(samples[1])
@@ -133,7 +130,9 @@ def to_pressure(force, diameter=5):
 # R^2 = 1
 
 # TODO add GUI interface
+# mac port /dev/cu.usbserial-FTV98A40
 
+debug = True  # turns silent false
 start_height = 20  # mm
 pos_margin = 0.1  # mm
 protocol_names = ('stop', 'hold', 'multi_stop', 'long_stop')
@@ -143,9 +142,9 @@ try:
     rig
 except NameError:
     port = input('Input serial port name to connect: ').strip()
-    rig = connect(port)
+    rig = connect(port, silent=(not debug))
 else:
-    prep()  # reset home
+    prep(rig)  # reset home
 
 protocol = input('\n- '.join(['Select a protocol:', *protocol_names]) +
                  '\n: ').strip().lower()

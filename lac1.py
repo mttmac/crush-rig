@@ -312,7 +312,7 @@ class LAC1(object):
         self.sendcmds('GH')
 
     def move_enc(self, pos_enc, relative=False, wait_for_stop=False,
-                 return_pos=False):
+                 return_pos=False, **kwargs):
         """
         Move to a position specified in encoder counts.
         Alternatively move in relative encoder counts.
@@ -351,7 +351,7 @@ class LAC1(object):
         if return_pos:
             return self.read_position()
         else:
-            self.sendcmds()  # TODO is wait=False needed for abort?
+            self.sendcmds(**kwargs)
 
     def move_mm(self, pos_mm, **kwargs):
         pos_enc = self.move_enc(pos_mm * ENC_COUNTS_PER_MM, **kwargs)
@@ -368,7 +368,7 @@ class LAC1(object):
             dist_mm = abs(dist_mm)
         return self.move_mm(dist_mm, **kwargs)
 
-    def move_const_vel(self, mmpersecond=None, toward_home=True):
+    def move_const_vel(self, mmpersecond=None, toward_home=True, **kwargs):
         """
         Start the actuator moving in a direction at a velocity in mm/s.
         Moves toward home at max velocity by default.
@@ -384,7 +384,7 @@ class LAC1(object):
         self.set_direction(extend=extend, chain=True)
         if mmpersecond is not None:
             self.set_max_velocity(mmpersecond, chain=True)
-        self.go()  # TODO is wait=False needed for abort?
+        self.go(**kwargs)
 
     def move_const_torque(self, torque, **kwargs):
         """
@@ -396,9 +396,9 @@ class LAC1(object):
 
         self.set_max_torque(torque, chain=True)
         self.torque_mode(chain=True)
-        self.go()  # TODO is wait=False needed for abort?
+        self.go(**kwargs)
 
-    def set_mode(self, mode='safe'):
+    def set_mode(self, mode='safe', **kwargs):
         """
         Set the speed, acceleration and torque limits for the mode needed.
         Modes:
@@ -423,7 +423,7 @@ class LAC1(object):
         self.position_mode(chain=True)
         self.set_max_velocity(mmpersecond, chain=True)
         self.set_max_acceleration(mmpersecond2, chain=True)
-        self.set_max_torque(q)
+        self.set_max_torque(q, **kwargs)
 
     # Read methods
     # Warning: read methods can't be chained and will end current chains
@@ -456,6 +456,12 @@ class LAC1(object):
         Returns the current position in mm
         """
         return self.read_position() / ENC_COUNTS_PER_MM
+
+    def read_velocity(self):
+        """
+        Return the current velocity of the actuator in mm/s.
+        """
+        return int(self.sendcmds('TV')[-1]) / KV
 
     def read_parameters(self, pset=0):
         """
@@ -502,8 +508,7 @@ class LAC1(object):
         """
         raw_output = self.sendcmds('TP,TA8,TQ')
 
-        if len(raw_output) < 3:
-            return None
+        assert len(raw_output) == 3, 'Read error'
 
         self._current_pos_enc = int(raw_output[-3])
         return (self._current_pos_enc / ENC_COUNTS_PER_MM,
