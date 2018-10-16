@@ -17,15 +17,19 @@ from threading import Timer
 
 def connect(port):
     rig = LAC1(port, reset=True)
+    prep()
+    return rig
+
+
+def prep():
     rig.home()
     rig.set_mode('travel')
     rig.move_clear(start_height)
-    return rig
 
 
 def disconnect():
     rig.set_mode('travel')
-    rig.move_clear(10, wait_for_stop=True)
+    rig.move_clear(5, wait_for_stop=True)
     rig.set_mode('safe')
     rig.move_clear(0, wait_for_stop=True)
     rig.close()
@@ -42,18 +46,21 @@ def single_crush(target_force, target_action='stop', duration=10, multi=False):
     data = []
     window = 10
     forces = deque(maxlen=window)
-    pos_margin = 0.1  # mm
 
     # rig is at start height prior to protocol
     rig.set_mode('crush')
     start_pos = rig.read_position_mm()
     rig.move_const_vel(toward_home=True)
+    time.sleep(0.1)
 
     timer = Timer(duration, rig.move_clear(start_height))
     target_met = False
     done = False
     while not done:
         samples = rig.read_pos_and_force()
+        if samples is None:
+            print('debug')  # TODO remove
+            continue
 
         if not target_met:
             forces.append(samples[1])
@@ -128,13 +135,19 @@ def to_pressure(force, diameter=5):
 # TODO add GUI interface
 
 start_height = 20  # mm
+pos_margin = 0.1  # mm
 protocol_names = ('stop', 'hold', 'multi_stop', 'long_stop')
 
-# port = '/dev/tty.usbserial-FTV98A40'
-port = input('Input serial port name to connect: ').strip()
-rig = connect(port)
+# Connect to rig if not already connected
+try:
+    rig
+except NameError:
+    port = input('Input serial port name to connect: ').strip()
+    rig = connect(port)
+else:
+    prep()  # reset home
 
-protocol = input('\n- '.join(['Select a protocol', *protocol_names]) +
+protocol = input('\n- '.join(['Select a protocol:', *protocol_names]) +
                  '\n: ').strip().lower()
 assert protocol in protocol_names, 'Invalid protocol input'
 
@@ -163,7 +176,8 @@ with filepath.open('w', newline='') as file:
 
     cmd = input("Press enter to run protocol or 'x' to exit: ")
     if cmd.strip().lower() == 'x':
-        exit()
+        import sys
+        sys.exit()
 
     if protocol == 'stop':
         data = single_crush(target_force, target_action='stop')

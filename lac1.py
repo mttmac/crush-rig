@@ -88,7 +88,7 @@ class LAC1(object):
             stopbits=1,
             parity='N',
             timeout=0.1)
-        self._last_serial_send_time = None
+        self._last_serial_send_time = time.time()
 
         # Reset then setup initial parameters
         if reset:
@@ -351,7 +351,7 @@ class LAC1(object):
         if return_pos:
             return self.read_position()
         else:
-            self.sendcmds(wait=False)
+            self.sendcmds()  # TODO is wait=False needed for abort?
 
     def move_mm(self, pos_mm, **kwargs):
         pos_enc = self.move_enc(pos_mm * ENC_COUNTS_PER_MM, **kwargs)
@@ -384,7 +384,7 @@ class LAC1(object):
         self.set_direction(extend=extend, chain=True)
         if mmpersecond is not None:
             self.set_max_velocity(mmpersecond, chain=True)
-        self.go(wait=False)
+        self.go()  # TODO is wait=False needed for abort?
 
     def move_const_torque(self, torque, **kwargs):
         """
@@ -396,7 +396,7 @@ class LAC1(object):
 
         self.set_max_torque(torque, chain=True)
         self.torque_mode(chain=True)
-        self.go(wait=False)
+        self.go()  # TODO is wait=False needed for abort?
 
     def set_mode(self, mode='safe'):
         """
@@ -501,6 +501,10 @@ class LAC1(object):
         Return units are position in mm and force in N.
         """
         raw_output = self.sendcmds('TP,TA8,TQ')
+
+        if len(raw_output) < 3:
+            return None
+
         self._current_pos_enc = int(raw_output[-3])
         return (self._current_pos_enc / ENC_COUNTS_PER_MM,
                 self.convert_force(raw_output[-2]), int(raw_output[-1]))
