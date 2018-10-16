@@ -36,8 +36,9 @@ def disconnect(rig):
     rig.close()
 
 
-def invert(var):
-    var = -var
+def expire_stage():
+    global stage
+    stage = -1
 
 
 def single_crush(target_force, target_action='stop', duration=10, multi=False):
@@ -58,7 +59,7 @@ def single_crush(target_force, target_action='stop', duration=10, multi=False):
     rig.move_const_vel(toward_home=True)
 
     stage = 0  # 0 for crush, 1 for action, 2 for release
-    timer = Timer(duration, invert, [stage])
+    timer = Timer(duration, expire_stage)
     done = False
     while not done:
         samples = rig.read_pos_and_force()
@@ -67,7 +68,7 @@ def single_crush(target_force, target_action='stop', duration=10, multi=False):
             forces.append(samples[1])
             if (sum(forces) / window) >= target_force:
                 if target_action == 'stop':
-                    rig.stop(wait=False)
+                    rig.stop()
                 elif target_action == 'hold':
                     rig.move_const_torque(samples[2])
 
@@ -140,6 +141,7 @@ def to_pressure(force, diameter=5):
 # TODO add GUI interface
 # mac serial port: /dev/cu.usbserial-FTV98A40
 
+global stage
 debug = True  # turns silent false
 start_height = 20  # mm
 pos_margin = 0.1  # mm

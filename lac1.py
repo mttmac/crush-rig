@@ -94,7 +94,7 @@ class LAC1(object):
         if reset:
             self.sendcmds('RM,RT', wait=False)
             self._sleepfunc(3)  # wait for reset
-        self.sendcmds('EF', wait=False)
+        self.sendcmds('EF')
         self.sendcmds(
             'SS', SS,
             'SG', SG,
