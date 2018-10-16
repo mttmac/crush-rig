@@ -12,7 +12,6 @@ from glob import glob
 from math import pi
 from lac1 import LAC1
 from collections import deque
-from threading import Timer
 
 
 def connect(port, silent=True):
@@ -36,11 +35,6 @@ def disconnect(rig):
     rig.close()
 
 
-def expire_stage():
-    global stage
-    stage = -1
-
-
 def single_crush(target_force, target_action='stop', duration=10, multi=False):
     """
     Will execute a crush until target force is met, then will either 'stop'
@@ -59,10 +53,10 @@ def single_crush(target_force, target_action='stop', duration=10, multi=False):
     rig.move_const_vel(toward_home=True)
 
     stage = 0  # 0 for crush, 1 for action, 2 for release
-    timer = Timer(duration, expire_stage)
     done = False
     while not done:
         samples = rig.read_pos_and_force()
+        print(stage)
 
         if stage == 0:
             forces.append(samples[1])
@@ -71,12 +65,10 @@ def single_crush(target_force, target_action='stop', duration=10, multi=False):
                     rig.stop()
                 elif target_action == 'hold':
                     rig.move_const_torque(samples[2])
-
-                stage = 1
                 target_time = time.time()
-                timer.start()
+                stage = 1
 
-        elif stage == -1:
+        elif stage == 1 and (time.time() - target_time) >= duration:
             rig.move_clear(start_height)
             stage = 2
 
