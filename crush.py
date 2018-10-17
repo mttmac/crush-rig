@@ -56,7 +56,6 @@ def single_crush(target_force, target_action='stop', duration=10, multi=False):
     done = False
     while not done:
         samples = rig.read_pos_and_force()
-        print(stage)
 
         if stage == 0:
             forces.append(samples[1])
@@ -91,7 +90,7 @@ def multi_crush(target_force, num_crushes=5, target_action='stop',
     or 'hold' for duration once target force achieved. Logs data throughout.
     """
 
-    pause = duration * ((1 - duty_cycle) / duty_cycle)  # TODO I don't think this is workign right, too short
+    pause = duration * ((1 - duty_cycle) / duty_cycle)  # TODO I don't think this is working right, too short
     data = []
     for i in range(num_crushes):
         new_data, last_target_time = single_crush(target_force, target_action,
@@ -134,8 +133,7 @@ def to_pressure(force, diameter=5):
 # TODO add GUI interface
 # mac serial port: /dev/cu.usbserial-FTV98A40
 
-global stage
-debug = True  # turns silent false
+debug = False  # turns silent false
 start_height = 20  # mm
 pos_margin = 0.1  # mm
 protocol_names = ('stop', 'hold', 'multi_stop', 'long_stop')
