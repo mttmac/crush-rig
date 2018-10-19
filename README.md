@@ -9,7 +9,11 @@ Forked from: https://github.com/freespace/smac-lac-1
 crush.py
 ==================
 
-This program runs various tissue crush profiles at programmable force settings.
+This program runs various tissue crush profiles at programmable force settings
+and stores all movement and force data in a csv transient file.
+It is intended to be used with the precision crush actuator for tissue 
+(precisionCAT) as part of an investigational study in partnership with the 
+CIGITI lab at the Hospital for Sick Children.
 
 License
 =======
