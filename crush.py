@@ -42,14 +42,18 @@ def single_crush(target_force, target_action='stop', duration=10, multi=False):
     """
 
     # TODO do I need to adjust for the hanging force of the sensor?
+    # TODO implement a prediction and slowdown as it approaches target to avoid overshoot
+    # TODO fine tune the average window
+    # TODO log the velocity? read, then set vlocity to half when slowing down
 
     data = []
-    window = 10
+    window = 2
     forces = deque(maxlen=window)
 
     # rig is at start height prior to protocol
     rig.set_mode('crush')
     start_pos = rig.read_position_mm()
+    start_time = time.time()
     rig.move_const_vel(toward_home=True)
 
     stage = 0  # 0 for crush, 1 for action, 2 for release
@@ -76,7 +80,9 @@ def single_crush(target_force, target_action='stop', duration=10, multi=False):
             if abs(samples[0] - start_pos) < pos_margin:
                 done = True
 
-        data.append((time.time(), *samples, stage))
+        data.append((
+            round(time.time() - start_time, 6),
+            *[round(sample, 6) for sample in samples], stage))  # TODO fast enough?
 
     if multi:
         return data, target_time
