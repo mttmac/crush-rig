@@ -33,7 +33,7 @@ FR = 1
 # Time to wait for actuator to stop in ms.
 WS_PERIOD_MS = 25
 # LAC-1 manual recommends a small delay of 100 ms after sending commands
-SERIAL_SEND_WAIT_SEC = 0.100  # TODO need to be faster?
+SERIAL_SEND_WAIT_SEC = 0.100  # TODO does this slow it down?
 # Each line cannot exceed 127 characters as per LAC-1 manual
 SERIAL_MAX_LINE_LENGTH = 127
 
@@ -303,7 +303,7 @@ class LAC1(object):
         self.wait(1000, for_stop=True, chain=True)
         self.sendcmds('DH0')  # store home as 0
 
-        self._current_pos_enc = self.read_position()
+        self._current_pos_enc = self.read_position_enc()
         self.motor_on()
 
     def home(self):
@@ -349,7 +349,7 @@ class LAC1(object):
             self.wait(for_stop=True, chain=True)
 
         if return_pos:
-            return self.read_position()
+            return self.read_position_enc()
         else:
             self.sendcmds(**kwargs)
 
@@ -444,18 +444,18 @@ class LAC1(object):
         target = int(raw_output[-2])
         return self._current_pos_enc - target
 
-    def read_position(self):
+    def read_position_enc(self):
         """
         Returns the current position in encoder counts
         """
         self._current_pos_enc = int(self.sendcmds('TP')[-1])
         return self._current_pos_enc
 
-    def read_position_mm(self):
+    def read_position(self):
         """
         Returns the current position in mm
         """
-        return self.read_position() / ENC_COUNTS_PER_MM
+        return self.read_position_enc() / ENC_COUNTS_PER_MM
 
     def read_velocity(self):
         """
@@ -489,30 +489,27 @@ class LAC1(object):
         """
         return self.convert_force(self.read_analog_input(8))
 
-    def convert_force(self, voltage):
-        # Formula used to convert sensor data into Newtons as per predetermined
-        # sensor calibration curve
-        return (9.81 * ((4.3308 * int(voltage)) - 1073.1) / 1000)
-
     def read_weight(self):
         """
         Converts force reading to grams at standard earth gravity.
         """
         return 1000 * self.read_force() / 9.81
 
-    def read_pos_and_force(self):
+    def read_movement_and_force(self):
         """
         Combines two simultaneous reads: position and force, to allow chaining.
         Torque is also read as an indirect metric of force (units arbitrary).
         Return units are position in mm and force in N.
         """
-        raw_output = self.sendcmds('TP,TA8,TQ')
+        raw_output = self.sendcmds('TP,TV,TA8,TQ')
 
-        assert len(raw_output) == 3, 'Read error'
+        assert len(raw_output) == 4, 'Read error'
 
-        self._current_pos_enc = int(raw_output[-3])
+        self._current_pos_enc = int(raw_output[-4])
         return (self._current_pos_enc / ENC_COUNTS_PER_MM,
-                self.convert_force(raw_output[-2]), int(raw_output[-1]))
+                int(raw_output[-3]) / KV,
+                raw_output[-2],  # analog voltage
+                int(raw_output[-1]))
 
     # Shutdown methods
     def close(self):

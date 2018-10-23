@@ -35,6 +35,21 @@ def disconnect(rig):
     rig.close()
 
 
+def convert_force(self, voltage):
+    # Formula used to convert sensor data voltage reading into Newtons as per
+    # predetermined sensor calibration curve
+    # Calibration curve July 18, 2017 # TODO update
+    # 0 - 248
+    # 200 - 294
+    # 300 - 317
+    # 500 - 363
+    # 800 - 432
+    # 1000 - 479
+    # 1200 - 525
+    # R^2 = 1
+    return (9.81 * ((4.3308 * int(voltage)) - 1073.1) / 1000)
+
+
 def single_crush(target_force, target_action='stop', duration=10, multi=False):
     """
     Will execute a crush until target force is met, then will either 'stop'
@@ -44,7 +59,9 @@ def single_crush(target_force, target_action='stop', duration=10, multi=False):
     # TODO do I need to adjust for the hanging force of the sensor?
     # TODO implement a prediction and slowdown as it approaches target to avoid overshoot
     # TODO fine tune the average window
-    # TODO log the velocity? read, then set vlocity to half when slowing down
+    # TODO log the velocity. read, then set vlocity to half when slowing down
+    # TODO store delta timestamp - DONE
+    # TODO shorten the precision of the force numbers to 6 - DONE
 
     data = []
     window = 2
@@ -126,15 +143,7 @@ def to_pressure(force, diameter=5):
     return 1000 * force / area
 
 
-# Calibration curve July 18, 2017 # TODO update
-# 0 - 248
-# 200 - 294
-# 300 - 317
-# 500 - 363
-# 800 - 432
-# 1000 - 479
-# 1200 - 525
-# R^2 = 1
+
 
 # TODO add GUI interface
 # mac serial port: /dev/cu.usbserial-FTV98A40
