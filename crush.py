@@ -47,7 +47,7 @@ def convert_force(self, voltage):
     # 1000 - 479
     # 1200 - 525
     # R^2 = 1
-    return (9.81 * ((4.3308 * int(voltage)) - 1073.1) / 1000)
+    return round(9.81 * ((4.3308 * int(voltage)) - 1073.1) / 1000, 6)
 
 
 def single_crush(target_force, target_action='stop', duration=10, multi=False):
@@ -64,22 +64,23 @@ def single_crush(target_force, target_action='stop', duration=10, multi=False):
     # TODO shorten the precision of the force numbers to 6 - DONE
 
     data = []
-    window = 2
+    window = 3
     forces = deque(maxlen=window)
 
     # rig is at start height prior to protocol
     rig.set_mode('crush')
-    start_pos = rig.read_position_mm()
+    start_pos = rig.read_position()
     start_time = time.time()
     rig.move_const_vel(toward_home=True)
 
     stage = 0  # 0 for crush, 1 for action, 2 for release
     done = False
     while not done:
-        samples = rig.read_pos_and_force()
+        samples = rig.read_movement_and_force()
+        samples[2] = convert_force(samples[2])
 
         if stage == 0:
-            forces.append(samples[1])
+            forces.append(samples[2])
             if (sum(forces) / window) >= target_force:
                 if target_action == 'stop':
                     rig.stop()
@@ -97,9 +98,8 @@ def single_crush(target_force, target_action='stop', duration=10, multi=False):
             if abs(samples[0] - start_pos) < pos_margin:
                 done = True
 
-        data.append((
-            round(time.time() - start_time, 6),
-            *[round(sample, 6) for sample in samples], stage))  # TODO fast enough?
+        data.append((round(time.time() - start_time, 6), *samples, stage))
+        # TODO fast enough?
 
     if multi:
         return data, target_time

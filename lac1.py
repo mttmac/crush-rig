@@ -487,7 +487,7 @@ class LAC1(object):
         Return analog input reading from ADC channel 8 with attached load cell.
         Converts reading to force based on calibration table.
         """
-        return self.convert_force(self.read_analog_input(8))
+        return self.read_analog_input(8)
 
     def read_weight(self):
         """
