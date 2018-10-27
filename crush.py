@@ -35,7 +35,7 @@ def disconnect(rig):
     rig.close()
 
 
-def convert_force(self, voltage):
+def convert_force(voltage):
     # Formula used to convert sensor data voltage reading into Newtons as per
     # predetermined sensor calibration curve
     # Calibration curve Oct 24 2018 (g - voltage)
@@ -58,11 +58,12 @@ def single_crush(target_force, target_action='stop', duration=10, multi=False):
     """
 
     # TODO do I need to adjust for the hanging force of the sensor?
-    # TODO implement a prediction and slowdown as it approaches target to avoid overshoot
+    # TODO implement a prediction and slowdown as it approaches target to avoid overshoot, halve velocity to do so
     # TODO fine tune the average window
-    # TODO log the velocity. read, then set vlocity to half when slowing down
+    # TODO log the velocity - DONE
     # TODO store delta timestamp - DONE
     # TODO shorten the precision of the force numbers to 6 - DONE
+    # TODO fix pause duration for multi crush - DONE
 
     data = []
     window = 3
@@ -123,7 +124,7 @@ def multi_crush(target_force, num_crushes=5, target_action='stop',
 
         if i == num_crushes - 1:
             continue
-        time.sleep(min(duration + pause - (time.time() - last_target_time), 0))
+        time.sleep(max(duration + pause - (time.time() - last_target_time), 0))
 
     return data
 
@@ -144,15 +145,13 @@ def to_pressure(force, diameter=5):
     return 1000 * force / area
 
 
-
-
 # TODO add GUI interface
 # mac serial port: /dev/cu.usbserial-FTV98A40
 
 debug = False  # turns silent false
 start_height = 20  # mm
 pos_margin = 0.1  # mm
-protocol_names = ('stop', 'hold', 'multi_stop', 'long_stop')
+protocol_names = ('stop', 'hold', 'multi_stop', 'long_stop', 'no_stop')
 
 # Connect to rig if not already connected
 try:  # TODO this is not working in Anaconda, different namespace
@@ -207,6 +206,9 @@ with filepath.open('w', newline='') as file:
     elif protocol == 'long_stop':
         data = single_crush(target_force, target_action='stop', duration=60)
 
-    writer.writerow(('Timestamp (s)', 'Position (mm)', 'Force (N)',
-                     'Torque', 'Stage'))
+    elif protocol == 'no_stop':
+        data = single_crush(target_force, target_action='stop', duration=3)
+
+    writer.writerow(('Timestamp (s)', 'Position (mm)', 'Velocity (mm/s)',
+                     'Force (N)', 'Torque', 'Stage'))
     writer.writerows(data)

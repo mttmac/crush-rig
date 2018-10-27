@@ -489,12 +489,6 @@ class LAC1(object):
         """
         return self.read_analog_input(8)
 
-    def read_weight(self):
-        """
-        Converts force reading to grams at standard earth gravity.
-        """
-        return 1000 * self.read_force() / 9.81
-
     def read_movement_and_force(self):
         """
         Combines two simultaneous reads: position and force, to allow chaining.
@@ -506,10 +500,10 @@ class LAC1(object):
         assert len(raw_output) == 4, 'Read error'
 
         self._current_pos_enc = int(raw_output[-4])
-        return (self._current_pos_enc / ENC_COUNTS_PER_MM,
+        return [self._current_pos_enc / ENC_COUNTS_PER_MM,
                 int(raw_output[-3]) / KV,
                 raw_output[-2],  # analog voltage
-                int(raw_output[-1]))
+                int(raw_output[-1])]
 
     # Shutdown methods
     def close(self):
