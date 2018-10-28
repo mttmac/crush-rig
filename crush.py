@@ -78,7 +78,7 @@ def single_crush(target_force, target_action='stop', duration=10,
     # Start moving
     rig.move_const_vel(toward_home=True)
 
-    stage = 0  # 0 for approach, 1 for contact, 2 for target, 3 for release
+    stage = 0  # 0 for approach, 1 for crush, 2 for target, 3 for release
     done = False
     while not done:
         samples = rig.read_movement_and_force()
@@ -262,6 +262,8 @@ def crush(rig=None):
 
 
 # TODO add GUI interface
+# TODO does force extrapolation need more than one sample?
+# TODO should release mirror the crush for better resolution stiffness curves?
 
 # Main
 if __name__ == "__main__":
