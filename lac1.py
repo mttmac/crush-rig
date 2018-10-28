@@ -415,7 +415,7 @@ class LAC1(object):
             mmpersecond2 = 3800
             q = 32000
         elif mode == 'action':
-            mmpersecond = 6
+            mmpersecond = 5
             mmpersecond2 = 3000
             q = 30000
         else:

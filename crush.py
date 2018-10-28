@@ -58,8 +58,9 @@ def single_crush(target_force, target_action='stop', duration=10,
     or 'hold' for duration. Logs data throughout until returned to start.
     """
 
+    # Settings
     data = []
-    window = 5
+    window = 3
     forces = deque([0], maxlen=window)
     force_res_limit = max(0.02 * target_force, 0.1)  # aim for +/-1% error
     crush_velocity = 1.0  # mm/s
