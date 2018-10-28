@@ -388,8 +388,8 @@ class LAC1(object):
 
     def move_const_torque(self, torque, **kwargs):
         """
-        Start the actuator moving in a direction at a velocity in mm/s.
-        Moves toward home by default.
+        Make the actuator maintain a constant torque output, units match
+        read_torque return value.
         """
         assert self._current_pos_enc is not None, (
             "Home the actuator before attempting to move")

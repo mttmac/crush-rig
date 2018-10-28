@@ -84,7 +84,7 @@ def single_crush(target_force, target_action='stop', duration=10,
                 if target_action == 'stop':
                     rig.stop()
                 elif target_action == 'hold':
-                    rig.move_const_torque(samples[2])
+                    rig.move_const_torque(samples[3])
                 target_time = time.time()
                 stage = 1
 
