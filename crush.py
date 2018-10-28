@@ -58,18 +58,6 @@ def single_crush(target_force, target_action='stop', duration=10,
     or 'hold' for duration. Logs data throughout until returned to start.
     """
 
-    # TODO DONE do I need to adjust for the hanging force of the sensor? No, do it in post processing of data
-    # TODO implement a prediction and slowdown as it approaches target to avoid overshoot, halve velocity to do so
-    # TODO fine tune the average window
-    # TODO DONE log the velocity
-    # TODO DONE store delta timestamp
-    # TODO DONE shorten the precision of the force numbers to 6
-    # TODO DONE fix pause duration for multi crush
-    # TODO DONE avoid reopening serial each time
-    # TODO DONE make mode selection easier
-    # TODO DONE add range limit on gram target
-    # TODO add GUI interface
-
     data = []
     window = 3
     forces = deque(maxlen=window)
@@ -253,6 +241,10 @@ def crush(rig=None):
                          'Force (N)', 'Torque', 'Stage'))
         writer.writerows(data)
 
+
+# TODO implement prediction and slowdown as it approaches target to avoid overshoot, halve velocity to do so
+# TODO fine tune the average window
+# TODO add GUI interface
 
 # Main
 if __name__ == "__main__":
