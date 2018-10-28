@@ -59,9 +59,11 @@ def single_crush(target_force, target_action='stop', duration=10,
     """
 
     data = []
-    last_force = 0
-    force_res_limit = 0.02 * target_force  # aim for +/-1% error
+    window = 5
+    forces = deque([0], maxlen=window)
+    force_res_limit = max(0.02 * target_force, 0.1)  # aim for +/-1% error
     crush_velocity = 1.0  # mm/s
+    min_velocity = crush_velocity * (2 ** -3)
     pos_margin = 0.1  # mm
     # Knockdown force extrapolation by factor if stopping at target
     if target_action == 'stop':
@@ -83,37 +85,41 @@ def single_crush(target_force, target_action='stop', duration=10,
     while not done:
         samples = rig.read_movement_and_force()
         samples[2] = convert_force(samples[2])
+        forces.append(samples[2])
 
         if stage == 0:
-            if samples[2] >= min(last_force / 2, 0):  # contact
+            if sum(forces) / window >= 0:  # contact
                 rig.set_max_velocity(crush_velocity)
+                print('Tissue contact made..')
                 stage += 1
 
         elif stage == 1:
-            delta_force = samples[2] - last_force
+            delta_force = forces[-1] - forces[-2]
             # Try to predict next value if stopped now
-            if (samples[2]) >= target_force - (delta_force * knockdown):
+            if forces[-1] >= target_force - (delta_force * knockdown):
                 if target_action == 'stop':
                     rig.stop()
                 elif target_action == 'hold':
                     rig.move_const_torque(samples[3])
                 target_time = time.time()
+                print('Target force achieved..')
                 stage += 1
 
             # Slow down if force resolution becomes poor
-            elif abs(delta_force) > force_res_limit:
-                rig.set_max_velocity(abs(samples[1]) / 2)
+            elif samples[1] > min_velocity and (abs(delta_force) >
+                                                force_res_limit):
+                rig.set_max_velocity(max(abs(samples[1]) / 2, min_velocity))
 
         elif stage == 2 and (time.time() - target_time) >= duration:
             rig.set_mode('action')
             rig.move_clear(start_height)
+            print('Crush complete')
             stage += 1
 
         elif stage == 3:
             if abs(samples[0] - start_pos) < pos_margin:
                 done = True
 
-        last_force = samples[2]
         data.append((round(time.time() - start_time, 6), *samples, stage))
 
     if multi:
