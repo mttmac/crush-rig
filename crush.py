@@ -59,16 +59,15 @@ def single_crush(target_force, target_action='stop', duration=10,
     """
 
     data = []
-    window = 2
-    forces = deque([0], maxlen=window)
+    last_force = 0
     force_res_limit = 0.25  # N
     crush_velocity = 2.0  # mm/s
     min_velocity = 1.0  # mm/s
+    pos_margin = 0.1  # mm
 
     # rig is at start height prior to protocol
     rig.set_mode('action')
     start_pos = rig.read_position()
-    pos_margin = 0.1  # mm
     if start_time is None:
         start_time = time.time()
 
@@ -82,14 +81,12 @@ def single_crush(target_force, target_action='stop', duration=10,
         samples[2] = convert_force(samples[2])
 
         if stage == 0:
-            forces.append(samples[2])
-            if forces[-1] >= 0:  # compression
+            if samples[2] >= 0:  # compression
                 rig.set_max_velocity(crush_velocity)
                 stage += 1
 
         elif stage == 1:
-            forces.append(samples[2])
-            if (forces[-1]) >= target_force:
+            if (samples[2]) >= target_force:
                 if target_action == 'stop':
                     rig.stop()
                 elif target_action == 'hold':
@@ -98,7 +95,7 @@ def single_crush(target_force, target_action='stop', duration=10,
                 stage += 1
             # Slow down if force resolution becomes poor
             elif (abs(samples[1]) > min_velocity and
-                  abs(forces[-1] - forces[-2]) > force_res_limit):
+                  abs(samples[2] - last_force) > force_res_limit):
                 rig.set_max_velocity(min_velocity)
 
         elif stage == 2 and (time.time() - target_time) >= duration:
@@ -110,6 +107,7 @@ def single_crush(target_force, target_action='stop', duration=10,
             if abs(samples[0] - start_pos) < pos_margin:
                 done = True
 
+        last_force = samples[2]
         data.append((round(time.time() - start_time, 6), *samples, stage))
 
     if multi:
