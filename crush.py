@@ -60,9 +60,8 @@ def single_crush(target_force, target_action='stop', duration=10,
 
     data = []
     last_force = 0
-    force_res_limit = 0.25  # N
-    crush_velocity = 2.0  # mm/s
-    min_velocity = 1.0  # mm/s
+    force_res_limit = 0.02 * target_force  # aim for +/-1% error
+    crush_velocity = 1.0  # mm/s
     pos_margin = 0.1  # mm
 
     # rig is at start height prior to protocol
@@ -81,22 +80,24 @@ def single_crush(target_force, target_action='stop', duration=10,
         samples[2] = convert_force(samples[2])
 
         if stage == 0:
-            if samples[2] >= 0:  # compression
+            if samples[2] >= min(last_force / 2, 0):  # contact
                 rig.set_max_velocity(crush_velocity)
                 stage += 1
 
         elif stage == 1:
-            if (samples[2]) >= target_force:
+            delta_force = samples[2] - last_force
+            # Try to predict next value if stopped now
+            if (samples[2]) >= target_force - (delta_force / 4):
                 if target_action == 'stop':
                     rig.stop()
                 elif target_action == 'hold':
                     rig.move_const_torque(samples[3])
                 target_time = time.time()
                 stage += 1
+
             # Slow down if force resolution becomes poor
-            elif (abs(samples[1]) > min_velocity and
-                  abs(samples[2] - last_force) > force_res_limit):
-                rig.set_max_velocity(min_velocity)
+            elif abs(delta_force) > force_res_limit:
+                rig.set_max_velocity(abs(samples[1]) / 2)
 
         elif stage == 2 and (time.time() - target_time) >= duration:
             rig.set_mode('action')
@@ -255,8 +256,6 @@ def crush(rig=None):
         writer.writerows(data)
 
 
-# TODO DONE implement prediction and slowdown as it approaches target to avoid overshoot, halve velocity to do so
-# TODO DONE fine tune the average window
 # TODO add GUI interface
 
 # Main
