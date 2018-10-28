@@ -5,7 +5,6 @@
 # Tested on LCA50-025-72F actuator
 
 
-import sys
 import csv
 import time
 from pathlib import Path
@@ -17,13 +16,12 @@ from collections import deque
 
 def connect(port, silent=True):
     rig = LAC1(port, silent=silent, reset=True)
+    rig.home()
     prep(rig)
     return rig
 
 
 def prep(rig):
-    start_height = 20  # mm
-    rig.home()
     rig.wait(for_stop=True, chain=True)
     rig.set_mode('travel', chain=True)
     rig.move_clear(start_height)
@@ -67,9 +65,9 @@ def single_crush(target_force, target_action='stop', duration=10,
     # TODO DONE store delta timestamp
     # TODO DONE shorten the precision of the force numbers to 6
     # TODO DONE fix pause duration for multi crush
-    # TODO avoid reopening serial each time
-    # TODO make mode selection easier
-    # TODO add range limit on gram target
+    # TODO DONE avoid reopening serial each time
+    # TODO DONE make mode selection easier
+    # TODO DONE add range limit on gram target
     # TODO add GUI interface
 
     data = []
@@ -112,7 +110,6 @@ def single_crush(target_force, target_action='stop', duration=10,
                 done = True
 
         data.append((round(time.time() - start_time, 6), *samples, stage))
-        # TODO fast enough?
 
     if multi:
         return data, target_time
@@ -161,6 +158,21 @@ def to_pressure(force, diameter=5):
     return 1000 * force / area
 
 
+def get_selection(items, name='Item'):
+    name = name[0].upper() + name[1:]
+    for i, item in enumerate(items):
+        print(f"{i} - {item}")
+    while True:
+        try:
+            selection = int(input(': '))
+            break
+        except ValueError:
+            print('Invalid number')
+    warning = f"{name} {selection} not recognized"
+    assert selection >= 0 and selection < len(items), warning
+    return items[selection]
+
+
 def init(rig=None, debug=False):
 
     # User can input existing rig connection if available
@@ -172,10 +184,8 @@ def init(rig=None, debug=False):
         port_options = [option.device for option in list_ports.comports()]
 
         print('Input serial port number to connect:')
-        for i, option in enumerate(port_options):
-            print(f"{i} - {option}")
-        port = int(input(': '))
-        rig = connect(port_options[port], silent=(not debug))
+        port = get_selection(port_options, 'Port')
+        rig = connect(port, silent=(not debug))
         return rig
 
 
@@ -184,12 +194,14 @@ def crush(rig=None):
     # Initialize rig
     rig = init(rig)
 
+    # Get crush settings from user
     protocol_names = ('stop', 'hold', 'multi_stop', 'long_stop', 'no_stop')
-    protocol = input('\n- '.join(['Select a protocol:', *protocol_names]) +
-                     '\n: ').strip().lower()
-    assert protocol in protocol_names, 'Invalid protocol input'
+    print('Select a protocol:')
+    protocol = get_selection(protocol_names, 'Protocol')
 
-    target_weight = float(input('Input target load in grams: '))
+    max_weight = 5000  # limit to 5 kg load
+    target_weight = abs(float(input('Input target load in grams: ')))
+    assert target_weight <= max_weight, "Load set too high"
     target_force = to_force(target_weight)
 
     # Select file to write csv data
@@ -199,7 +211,8 @@ def crush(rig=None):
 
     # Prevent overwriting of files
     if filepath.is_file():
-        path_no_suffix = str(Path.joinpath(filepath.parent, filepath.stem)) + '*'
+        path_no_suffix = str(Path.joinpath(filepath.parent,
+                                           filepath.stem)) + '*'
         matching_files = glob(path_no_suffix)
         max_version = 1
         for file in matching_files:
@@ -207,16 +220,17 @@ def crush(rig=None):
                 continue
             max_version = max(max_version, int(Path(file).stem[-2:]))
         filepath = Path.cwd().joinpath(filepath.stem +
-            f'-{(max_version + 1):02}' +
-            filepath.suffix)
+                                       f'-{(max_version + 1):02}' +
+                                       filepath.suffix)
 
+    # Wait for go ahead
+    cmd = input("Press enter to run protocol or 'x' to exit: ")
+    if cmd.strip().lower() == 'x':
+        return
+
+    # Execute crush protocol
     with filepath.open('w', newline='') as file:
         writer = csv.writer(file)
-
-        cmd = input("Press enter to run protocol or 'x' to exit: ")
-        if cmd.strip().lower() == 'x':
-            import sys
-            sys.exit()
 
         if protocol == 'stop':
             data = single_crush(target_force, target_action='stop')
@@ -228,10 +242,12 @@ def crush(rig=None):
             data = multi_crush(target_force, target_action='stop')
 
         elif protocol == 'long_stop':
-            data = single_crush(target_force, target_action='stop', duration=60)
+            data = single_crush(target_force, target_action='stop',
+                                duration=60)
 
         elif protocol == 'no_stop':
-            data = single_crush(target_force, target_action='stop', duration=3)
+            data = single_crush(target_force, target_action='stop',
+                                duration=0.1)
 
         writer.writerow(('Timestamp (s)', 'Position (mm)', 'Velocity (mm/s)',
                          'Force (N)', 'Torque', 'Stage'))
@@ -240,4 +256,10 @@ def crush(rig=None):
 
 # Main
 if __name__ == "__main__":
+    global start_height
+    start_height = 20  # mm
     rig = init()
+
+    import sys
+    if '-c' in sys.argv[1:]:
+        crush(rig)
