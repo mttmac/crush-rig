@@ -51,7 +51,8 @@ def convert_force(voltage):
     return round(0.0274 * int(voltage) - 8.175, 6)
 
 
-def single_crush(target_force, target_action='stop', duration=10, multi=False):
+def single_crush(target_force, target_action='stop', duration=10,
+                 start_time=None, multi=False):
     """
     Will execute a crush until target force is met, then will either 'stop'
     or 'hold' for duration. Logs data throughout until returned to start.
@@ -72,7 +73,8 @@ def single_crush(target_force, target_action='stop', duration=10, multi=False):
     # rig is at start height prior to protocol
     rig.set_mode('crush')
     start_pos = rig.read_position()
-    start_time = time.time()
+    if start_time is None:
+        start_time = time.time()
     rig.move_const_vel(toward_home=True)
 
     stage = 0  # 0 for crush, 1 for action, 2 for release
@@ -104,7 +106,7 @@ def single_crush(target_force, target_action='stop', duration=10, multi=False):
         # TODO fast enough?
 
     if multi:
-        return data, target_time
+        return data, start_time, target_time
     return data
 
 
@@ -115,16 +117,20 @@ def multi_crush(target_force, num_crushes=5, target_action='stop',
     or 'hold' for duration once target force achieved. Logs data throughout.
     """
 
-    pause = duration * ((1 - duty_cycle) / duty_cycle)  # TODO I don't think this is working right, too short
+    pause = duration * ((1 - duty_cycle) / duty_cycle)
     data = []
+    start_time = time.time()
     for i in range(num_crushes):
-        new_data, last_target_time = single_crush(target_force, target_action,
-                                                  duration, multi=True)
+        new_data, prev_start_time, prev_target_time = single_crush(
+            target_force, target_action, duration, start_time, True)
         data += new_data
 
         if i == num_crushes - 1:
             continue
-        time.sleep(max(duration + pause - (time.time() - last_target_time), 0))
+        prev_time_to_target = prev_target_time - prev_start_time
+        time_since_target = time.time() - prev_target_time
+        delay_time = duration + pause - prev_time_to_target - time_since_target
+        time.sleep(max(delay_time, 0))
 
     return data
 
