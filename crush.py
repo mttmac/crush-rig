@@ -62,10 +62,11 @@ def single_crush(target_force, target_action='stop', duration=10,
     window = 2
     forces = deque([0], maxlen=window)
     force_res_limit = 0.25  # N
+    crush_velocity = 2.0  # mm/s
     min_velocity = 1.0  # mm/s
 
     # rig is at start height prior to protocol
-    rig.set_mode('crush')
+    rig.set_mode('action')
     start_pos = rig.read_position()
     pos_margin = 0.1  # mm
     if start_time is None:
@@ -74,7 +75,7 @@ def single_crush(target_force, target_action='stop', duration=10,
     # Start moving
     rig.move_const_vel(toward_home=True)
 
-    stage = 0  # 0 for crush, 1 for action, 2 for release
+    stage = 0  # 0 for approach, 1 for contact, 2 for target, 3 for release
     done = False
     while not done:
         samples = rig.read_movement_and_force()
@@ -82,25 +83,30 @@ def single_crush(target_force, target_action='stop', duration=10,
 
         if stage == 0:
             forces.append(samples[2])
+            if forces[-1] >= 0:  # compression
+                rig.set_max_velocity(crush_velocity)
+                stage += 1
+
+        elif stage == 1:
+            forces.append(samples[2])
             if (forces[-1]) >= target_force:
                 if target_action == 'stop':
                     rig.stop()
                 elif target_action == 'hold':
                     rig.move_const_torque(samples[3])
                 target_time = time.time()
-                stage = 1
-
-            # Slow down on approach if force resolution becomes poor
+                stage += 1
+            # Slow down if force resolution becomes poor
             elif (abs(samples[1]) > min_velocity and
                   abs(forces[-1] - forces[-2]) > force_res_limit):
-                rig.set_max_velocity(max(min_velocity, samples[1] / 2))
+                rig.set_max_velocity(min_velocity)
 
-        elif stage == 1 and (time.time() - target_time) >= duration:
-            rig.set_mode('crush')
+        elif stage == 2 and (time.time() - target_time) >= duration:
+            rig.set_mode('action')
             rig.move_clear(start_height)
-            stage = 2
+            stage += 1
 
-        elif stage == 2:
+        elif stage == 3:
             if abs(samples[0] - start_pos) < pos_margin:
                 done = True
 
@@ -251,8 +257,8 @@ def crush(rig=None):
         writer.writerows(data)
 
 
-# TODO implement prediction and slowdown as it approaches target to avoid overshoot, halve velocity to do so
-# TODO fine tune the average window
+# TODO DONE implement prediction and slowdown as it approaches target to avoid overshoot, halve velocity to do so
+# TODO DONE fine tune the average window
 # TODO add GUI interface
 
 # Main

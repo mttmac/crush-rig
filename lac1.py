@@ -404,7 +404,7 @@ class LAC1(object):
         Modes:
         - safe
         - travel
-        - crush
+        - action
         """
         if mode == 'safe':
             mmpersecond = 1
@@ -414,7 +414,7 @@ class LAC1(object):
             mmpersecond = 75
             mmpersecond2 = 3800
             q = 32000
-        elif mode == 'crush':
+        elif mode == 'action':
             mmpersecond = 6
             mmpersecond2 = 3000
             q = 30000
