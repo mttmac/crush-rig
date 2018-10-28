@@ -22,6 +22,7 @@ def connect(port, silent=True):
 
 
 def prep(rig):
+    start_height = 20  # mm
     rig.home()
     rig.wait(for_stop=True, chain=True)
     rig.set_mode('travel', chain=True)
@@ -78,8 +79,11 @@ def single_crush(target_force, target_action='stop', duration=10,
     # rig is at start height prior to protocol
     rig.set_mode('crush')
     start_pos = rig.read_position()
+    pos_margin = 0.1  # mm
     if start_time is None:
         start_time = time.time()
+
+    # Start moving
     rig.move_const_vel(toward_home=True)
 
     stage = 0  # 0 for crush, 1 for action, 2 for release
@@ -157,18 +161,10 @@ def to_pressure(force, diameter=5):
     return 1000 * force / area
 
 
-# Main
-if __name__ == "__main__":
+def init(rig=None, debug=False):
 
-    # Init settings
-    debug = False  # turns off silent when True
-    start_height = 20  # mm
-    pos_margin = 0.1  # mm
-    protocol_names = ('stop', 'hold', 'multi_stop', 'long_stop', 'no_stop')
-
-    # User can input existing rig connection
-    if type(sys.argv[0]) is LAC1:
-        rig = sys.argv[0]
+    # User can input existing rig connection if available
+    if type(rig) is LAC1 and not debug:
         prep(rig)
     else:
         # Connect to new rig over serial otherwise
@@ -180,7 +176,15 @@ if __name__ == "__main__":
             print(f"{i} - {option}")
         port = int(input(': '))
         rig = connect(port_options[port], silent=(not debug))
+        return rig
 
+
+def crush(rig=None):
+
+    # Initialize rig
+    rig = init(rig)
+
+    protocol_names = ('stop', 'hold', 'multi_stop', 'long_stop', 'no_stop')
     protocol = input('\n- '.join(['Select a protocol:', *protocol_names]) +
                      '\n: ').strip().lower()
     assert protocol in protocol_names, 'Invalid protocol input'
@@ -232,3 +236,8 @@ if __name__ == "__main__":
         writer.writerow(('Timestamp (s)', 'Position (mm)', 'Velocity (mm/s)',
                          'Force (N)', 'Torque', 'Stage'))
         writer.writerows(data)
+
+
+# Main
+if __name__ == "__main__":
+    rig = init()
