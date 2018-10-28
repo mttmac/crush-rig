@@ -268,9 +268,7 @@ def crush(rig=None):
         writer.writerows(data)
 
 
-# TODO add GUI interface
-# TODO does force extrapolation need more than one sample?
-# TODO should release mirror the crush for better resolution stiffness curves?
+# TODO add GUI interface and plotting
 
 # Main
 if __name__ == "__main__":
