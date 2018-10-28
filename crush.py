@@ -59,8 +59,10 @@ def single_crush(target_force, target_action='stop', duration=10,
     """
 
     data = []
-    window = 3
-    forces = deque(maxlen=window)
+    window = 2
+    forces = deque([0], maxlen=window)
+    force_res_limit = 0.25  # N
+    min_velocity = 1.0  # mm/s
 
     # rig is at start height prior to protocol
     rig.set_mode('crush')
@@ -80,13 +82,18 @@ def single_crush(target_force, target_action='stop', duration=10,
 
         if stage == 0:
             forces.append(samples[2])
-            if (sum(forces) / window) >= target_force:
+            if (forces[-1]) >= target_force:
                 if target_action == 'stop':
                     rig.stop()
                 elif target_action == 'hold':
                     rig.move_const_torque(samples[3])
                 target_time = time.time()
                 stage = 1
+
+            # Slow down on approach if force resolution becomes poor
+            elif (abs(samples[1]) > min_velocity and
+                  abs(forces[-1] - forces[-2]) > force_res_limit):
+                rig.set_max_velocity(max(min_velocity, samples[1] / 2))
 
         elif stage == 1 and (time.time() - target_time) >= duration:
             rig.set_mode('crush')
@@ -183,13 +190,14 @@ def crush(rig=None):
     rig = init(rig)
 
     # Get crush settings from user
-    protocol_names = ('stop', 'hold', 'multi_stop', 'long_stop', 'no_stop')
+    protocol_names = ('stop', 'hold', 'multi_stop', 'multi_hold',
+                      'long_stop', 'no_stop')
     print('Select a protocol:')
     protocol = get_selection(protocol_names, 'Protocol')
 
     max_weight = 5000  # limit to 5 kg load
     target_weight = abs(float(input('Input target load in grams: ')))
-    assert target_weight <= max_weight, "Load set too high"
+    assert target_weight <= max_weight, "Load too high"
     target_force = to_force(target_weight)
 
     # Select file to write csv data
@@ -221,21 +229,22 @@ def crush(rig=None):
         writer = csv.writer(file)
 
         if protocol == 'stop':
-            data = single_crush(target_force, target_action='stop')
+            data = single_crush(target_force)
 
         elif protocol == 'hold':
             data = single_crush(target_force, target_action='hold')
 
         elif protocol == 'multi_stop':
-            data = multi_crush(target_force, target_action='stop')
+            data = multi_crush(target_force)
+
+        elif protocol == 'multi_hold':
+            data = multi_crush(target_force, target_action='hold')
 
         elif protocol == 'long_stop':
-            data = single_crush(target_force, target_action='stop',
-                                duration=60)
+            data = single_crush(target_force, duration=60)
 
         elif protocol == 'no_stop':
-            data = single_crush(target_force, target_action='stop',
-                                duration=0.1)
+            data = single_crush(target_force, duration=0.1)
 
         writer.writerow(('Timestamp (s)', 'Position (mm)', 'Velocity (mm/s)',
                          'Force (N)', 'Torque', 'Stage'))
