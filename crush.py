@@ -63,6 +63,11 @@ def single_crush(target_force, target_action='stop', duration=10,
     force_res_limit = 0.02 * target_force  # aim for +/-1% error
     crush_velocity = 1.0  # mm/s
     pos_margin = 0.1  # mm
+    # Knockdown force extrapolation by factor if stopping at target
+    if target_action == 'stop':
+        knockdown = 0.25
+    else:
+        knockdown = 1
 
     # rig is at start height prior to protocol
     rig.set_mode('action')
@@ -87,7 +92,7 @@ def single_crush(target_force, target_action='stop', duration=10,
         elif stage == 1:
             delta_force = samples[2] - last_force
             # Try to predict next value if stopped now
-            if (samples[2]) >= target_force - (delta_force / 4):
+            if (samples[2]) >= target_force - (delta_force * knockdown):
                 if target_action == 'stop':
                     rig.stop()
                 elif target_action == 'hold':
