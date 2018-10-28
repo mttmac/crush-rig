@@ -5,6 +5,7 @@
 # Tested on LCA50-025-72F actuator
 
 
+import sys
 import csv
 import time
 from pathlib import Path
@@ -58,13 +59,17 @@ def single_crush(target_force, target_action='stop', duration=10,
     or 'hold' for duration. Logs data throughout until returned to start.
     """
 
-    # TODO do I need to adjust for the hanging force of the sensor?
+    # TODO DONE do I need to adjust for the hanging force of the sensor? No, do it in post processing of data
     # TODO implement a prediction and slowdown as it approaches target to avoid overshoot, halve velocity to do so
     # TODO fine tune the average window
-    # TODO log the velocity - DONE
-    # TODO store delta timestamp - DONE
-    # TODO shorten the precision of the force numbers to 6 - DONE
-    # TODO fix pause duration for multi crush - DONE
+    # TODO DONE log the velocity
+    # TODO DONE store delta timestamp
+    # TODO DONE shorten the precision of the force numbers to 6
+    # TODO DONE fix pause duration for multi crush
+    # TODO avoid reopening serial each time
+    # TODO make mode selection easier
+    # TODO add range limit on gram target
+    # TODO add GUI interface
 
     data = []
     window = 3
@@ -106,7 +111,7 @@ def single_crush(target_force, target_action='stop', duration=10,
         # TODO fast enough?
 
     if multi:
-        return data, start_time, target_time
+        return data, target_time
     return data
 
 
@@ -121,15 +126,16 @@ def multi_crush(target_force, num_crushes=5, target_action='stop',
     data = []
     start_time = time.time()
     for i in range(num_crushes):
-        new_data, prev_start_time, prev_target_time = single_crush(
+        cycle_start_time = time.time()
+        new_data, last_target_time = single_crush(
             target_force, target_action, duration, start_time, True)
         data += new_data
 
         if i == num_crushes - 1:
             continue
-        prev_time_to_target = prev_target_time - prev_start_time
-        time_since_target = time.time() - prev_target_time
-        delay_time = duration + pause - prev_time_to_target - time_since_target
+        time_to_target = last_target_time - cycle_start_time
+        time_since_target = time.time() - last_target_time
+        delay_time = (duration + pause - time_to_target) - time_since_target
         time.sleep(max(delay_time, 0))
 
     return data
@@ -151,70 +157,78 @@ def to_pressure(force, diameter=5):
     return 1000 * force / area
 
 
-# TODO add GUI interface
-# mac serial port: /dev/cu.usbserial-FTV98A40
+# Main
+if __name__ == "__main__":
 
-debug = False  # turns silent false
-start_height = 20  # mm
-pos_margin = 0.1  # mm
-protocol_names = ('stop', 'hold', 'multi_stop', 'long_stop', 'no_stop')
+    # Init settings
+    debug = False  # turns off silent when True
+    start_height = 20  # mm
+    pos_margin = 0.1  # mm
+    protocol_names = ('stop', 'hold', 'multi_stop', 'long_stop', 'no_stop')
 
-# Connect to rig if not already connected
-try:  # TODO this is not working in Anaconda, different namespace
-    rig
-except NameError:
-    port = input('Input serial port name to connect: ').strip()
-    rig = connect(port, silent=(not debug))
-else:
-    prep(rig)  # reset home
+    # User can input existing rig connection
+    if type(sys.argv[0]) is LAC1:
+        rig = sys.argv[0]
+        prep(rig)
+    else:
+        # Connect to new rig over serial otherwise
+        from serial.tools import list_ports
+        port_options = [option.device for option in list_ports.comports()]
 
-protocol = input('\n- '.join(['Select a protocol:', *protocol_names]) +
-                 '\n: ').strip().lower()
-assert protocol in protocol_names, 'Invalid protocol input'
+        print('Input serial port number to connect:')
+        for i, option in enumerate(port_options):
+            print(f"{i} - {option}")
+        port = int(input(': '))
+        rig = connect(port_options[port], silent=(not debug))
 
-target_weight = float(input('Input target load in grams: '))
-target_force = to_force(target_weight)
+    protocol = input('\n- '.join(['Select a protocol:', *protocol_names]) +
+                     '\n: ').strip().lower()
+    assert protocol in protocol_names, 'Invalid protocol input'
 
-# Select file to write csv data
-print('Storing crush data in current directory')
-filename = f"{protocol}-{target_weight}g.csv"
-filepath = Path.cwd().joinpath(filename)
+    target_weight = float(input('Input target load in grams: '))
+    target_force = to_force(target_weight)
 
-# Prevent overwriting of files
-if filepath.is_file():
-    path_no_suffix = str(Path.joinpath(filepath.parent, filepath.stem)) + '*'
-    matching_files = glob(path_no_suffix)
-    max_version = 1
-    for file in matching_files:
-        if file == str(filepath):
-            continue
-        max_version = max(max_version, int(Path(file).stem[-2:]))
-    filepath = Path.cwd().joinpath(filepath.stem + f'-{(max_version + 1):02}' +
-                                   filepath.suffix)
+    # Select file to write csv data
+    print('Storing crush data in current directory')
+    filename = f"{protocol}-{target_weight}g.csv"
+    filepath = Path.cwd().joinpath(filename)
 
-with filepath.open('w', newline='') as file:
-    writer = csv.writer(file)
+    # Prevent overwriting of files
+    if filepath.is_file():
+        path_no_suffix = str(Path.joinpath(filepath.parent, filepath.stem)) + '*'
+        matching_files = glob(path_no_suffix)
+        max_version = 1
+        for file in matching_files:
+            if file == str(filepath):
+                continue
+            max_version = max(max_version, int(Path(file).stem[-2:]))
+        filepath = Path.cwd().joinpath(filepath.stem +
+            f'-{(max_version + 1):02}' +
+            filepath.suffix)
 
-    cmd = input("Press enter to run protocol or 'x' to exit: ")
-    if cmd.strip().lower() == 'x':
-        import sys
-        sys.exit()
+    with filepath.open('w', newline='') as file:
+        writer = csv.writer(file)
 
-    if protocol == 'stop':
-        data = single_crush(target_force, target_action='stop')
+        cmd = input("Press enter to run protocol or 'x' to exit: ")
+        if cmd.strip().lower() == 'x':
+            import sys
+            sys.exit()
 
-    elif protocol == 'hold':
-        data = single_crush(target_force, target_action='hold')
+        if protocol == 'stop':
+            data = single_crush(target_force, target_action='stop')
 
-    elif protocol == 'multi_stop':
-        data = multi_crush(target_force, target_action='stop')
+        elif protocol == 'hold':
+            data = single_crush(target_force, target_action='hold')
 
-    elif protocol == 'long_stop':
-        data = single_crush(target_force, target_action='stop', duration=60)
+        elif protocol == 'multi_stop':
+            data = multi_crush(target_force, target_action='stop')
 
-    elif protocol == 'no_stop':
-        data = single_crush(target_force, target_action='stop', duration=3)
+        elif protocol == 'long_stop':
+            data = single_crush(target_force, target_action='stop', duration=60)
 
-    writer.writerow(('Timestamp (s)', 'Position (mm)', 'Velocity (mm/s)',
-                     'Force (N)', 'Torque', 'Stage'))
-    writer.writerows(data)
+        elif protocol == 'no_stop':
+            data = single_crush(target_force, target_action='stop', duration=3)
+
+        writer.writerow(('Timestamp (s)', 'Position (mm)', 'Velocity (mm/s)',
+                         'Force (N)', 'Torque', 'Stage'))
+        writer.writerows(data)
