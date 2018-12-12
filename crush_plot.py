@@ -1,7 +1,10 @@
 #!/usr/bin/env
 
 '''
-TODO
+Define tools to use in a jupyter notebook for analyzing crush data.
+
+Written by Matt MacDonald
+For CIGITI at the Hospital for Sick Children Toronto
 '''
 
 from pandas import Series, DataFrame
@@ -10,44 +13,57 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
-import os
+import glob
 
 
-def study_outline(study_outline, data_folder_path=None):
+PATH = Path('/Users/mattmacdonald/Data/RAWDATA_CRUSH/')
+
+
+def study_outline(root_folder=None):
     """
-    Reads study patients and associated details from a given csv file
-    containing study outline details, at minimum:
-    patient,gender,birthdate,procedure,date,surgeon,tissue,notes,issues
-    Assumes all data is kept in data folder provided, in working directory
-    Returns dataframe with patient ID as index
+    Reads study patients and associated details from a single csv file
+    in the root folder containing study outline details, at minimum:
+    PAtient Code,Procedure Date,Gender,DOB,Procedure,Tissue,Surgeon,
+    Notes,Issues,Histology,Classification
+    Assumes all data is kept in sub folders in root folder
+    Returns dataframe with Test ID as index
     """
     # Read outline file
-    if data_folder_path is None:
-        data_folder_path = os.getcwd()
-    study = pd.read_csv(Path('{}/{}'.format(data_folder_path, study_outline)))
+    if root_folder is None:
+        root_folder = Path.cwd()
+    files = glob.glob(str(root_folder / '*.csv'))
+    assert len(files) == 1, "Root data folder must only contain one .csv file."
+    study = pd.read_csv(root_folder / files[0])
 
     # Cleanup and organize information, including data subfolders
     study = study.fillna('N/A')
-    study.date = pd.to_datetime(study.date, format='%Y-%m-%d')
-    study.birthdate = pd.to_datetime(study.birthdate, format='%Y-%m-%d')
-    study['age'] = study.date - study.birthdate
+    study['Procedure Date'] = pd.to_datetime(study['Procedure Date'],
+                                             format='%Y-%m-%d')
+    study['DOB'] = pd.to_datetime(study['DOB'],
+                                  format='%m/%d/%Y')
+    study['Age'] = study['Procedure Date'] - study['DOB']
 
-    study = study[['patient', 'gender', 'birthdate', 'age', 'procedure',
-                   'date', 'surgeon', 'tissue', 'notes', 'issues']]
-    study['path'] = data_folder_path
-    study['folder'] = study.date.apply(lambda x:
-                                       x.strftime('%B_%d_%Y').upper())
-    study['subfolder'] = study.patient.apply(lambda x:
-                                             'PATIENT_{:d}'.format(x))
-    study = study.set_index('patient')
+    def get_folder_name(row):
+        date_fmt = "%Y%m%d"
+        fmt = "{date} - {code} - {clsf}"
+        date = row['Procedure Date'].strftime(date_fmt)
+        code = row['Patient Code'].upper()
+        clsf = row['Classification'].upper()
+        return fmt.format(**locals())
+
+    study['Folder Name'] = study.apply(get_folder_name, axis=1)
+
+    study.index = study.index + 1  # one indexed
+    study = study.rename_axis('Test ID')
 
     return study
 
 
+# TODO continue here
 def study_data(study):
     """
     Reads all crush data as per study outline dataframe
-    Loops over each patient ID index and reference folder and subfolders
+    Loops over each Patient Code and reference folder and subfolders
     Data csv files must have no titles and a summary line at eof with columns:
     time (seconds), position (um), force (grams)
     Returns dataframe with each crush's data appended as a row
@@ -211,6 +227,7 @@ def plot_data(crushes, align=False):
     axes[0].set_ylabel('position (mm)')
     axes[1].set_ylabel('force (N)')
     plt.show()
+
 
 if __name__ == "__main__":
     study = study_outline('study.csv', 'study-data')
