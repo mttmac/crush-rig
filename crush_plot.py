@@ -81,10 +81,17 @@ def study_data(study):
             epoch_time = os.stat(filepath).st_birthtime
         return pd.to_datetime(epoch_time, unit='s')
 
+    def to_force(weight):
+        """
+        Converts weight in grams to force in N at standard earth gravity.
+        """
+        return 9.81 * weight / 1000
+
     crushes = DataFrame(columns=['Test ID',
                                  'Datetime',
                                  'Protocol',
                                  'Load',
+                                 'Target',
                                  'Data'])
     crush_pattern = re.compile(r"(?P<protocol>\w+)-"
                                r"(?P<load>\d+.?\d*)g"
@@ -110,9 +117,11 @@ def study_data(study):
                 'Test ID': test,
                 'Datetime': get_creation_date(file),
                 'Protocol': crush_match.group('protocol'),
-                'Load': float(crush_match.group('load')),
+                'Load': f"{float(crush_match.group('load')):.0f}g",
+                'Target': to_force(float(crush_match.group('load'))),
                 'Data': data}, ignore_index=True)
 
+    crushes.index.name = ' Crush'
     return crushes
 
 
@@ -123,36 +132,40 @@ def calculate_data(crushes):
 
     # TODO: Add all error checking to top level function
 
-    def rolling_force(crush):
-        # Calculate rolling average force
-        window = 12  # approximately 1/2 sec
-        rolling_force = crush[['force']].rolling(
-            window=window, min_periods=int(window / 4), center=True).mean()
-        crush['rolling_force'] = rolling_force['force'].fillna(method='bfill')
-        crush.units['rolling_force'] = 'N'
-        return crush
-
-    def total_time(crush):
-        return crush.index[-1] - crush.index[0]
-
     def sample_period(crush):
-        return np.mean(crush.index[1:] - crush.index[:-1])
+        return pd.Timedelta(np.mean(crush.index[1:] - crush.index[:-1]))
 
     def sample_rate(crush):
-        return 1E9 / float(sample_period(crush))
+        # Returns the average sample rate in Hz
+        return 1 / sample_period(crush).total_seconds()
 
-    def touch_time(crush):
-        # TODO: fix, this is error prone for noisy crush transients
-        touch_metric = 0.1  # Assume 0.1 N increase equals touch
-        if 'rolling_force' in crush.columns:
-            force = crush['rolling_force']
-        else:
-            force = crush['force']
-        return (force - force[0] >= touch_metric).argmax()
+    def total_time(crush):
+        return pd.Timedelta(crush.index[-1] - crush.index[0])
+
+    def stage_times(crush):
+        # Return time of transition for each stage
+        # 0 for approach, 1 for crush, 2 for target, 3 for release
+        times = []
+        for stage in range(4):
+            times.append((crush['Stage'] == stage).argmax())
+        return tuple(times)
+
+    def contact_time(crush):
+        return stage_times(crush)[1]
 
     def hanging_load(crush):
-        touch = touch_time(crush)
-        return crush.force[crush.index <= touch].mean()
+        return crush['Force (N)'][crush.index <= contact_time(crush)].mean()
+
+    def use_rolling_force(crush):
+        # Calculate rolling average force with half second averaging window
+        # Intent is to smooth out noisy force sensor readings
+        window = max(10, int(sample_rate(crush) / 2))
+        mod_crush = crush.copy()
+        mod_crush['Force (N)'] = crush['Force (N)'].rolling(
+            window=window,
+            min_periods=int(window / 4),
+            center=True).mean().fillna(method='bfill')
+        return mod_crush
 
     def align_contact(crushes):
         """
