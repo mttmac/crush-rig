@@ -12,8 +12,14 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+
+import os
+import platform
 from pathlib import Path
 import glob
+import re
+
+from pdb import set_trace
 
 
 PATH = Path('/Users/mattmacdonald/Data/RAWDATA_CRUSH/')
@@ -23,11 +29,20 @@ def study_outline(root_folder=None):
     """
     Reads study patients and associated details from a single csv file
     in the root folder containing study outline details, at minimum:
-    PAtient Code,Procedure Date,Gender,DOB,Procedure,Tissue,Surgeon,
+    Patient Code,Procedure Date,Gender,DOB,Procedure,Tissue,Surgeon,
     Notes,Issues,Histology,Classification
     Assumes all data is kept in sub folders in root folder
     Returns dataframe with Test ID as index
     """
+
+    def get_folder_name(row):
+        date_fmt = "%Y%m%d"
+        fmt = "{date} - {code} - {clsf}"
+        date = row['Procedure Date'].strftime(date_fmt)
+        code = row['Patient Code'].upper()
+        clsf = row['Classification'].upper()
+        return fmt.format(**locals())
+
     # Read outline file
     if root_folder is None:
         root_folder = Path.cwd()
@@ -42,15 +57,6 @@ def study_outline(root_folder=None):
     study['DOB'] = pd.to_datetime(study['DOB'],
                                   format='%m/%d/%Y')
     study['Age'] = study['Procedure Date'] - study['DOB']
-
-    def get_folder_name(row):
-        date_fmt = "%Y%m%d"
-        fmt = "{date} - {code} - {clsf}"
-        date = row['Procedure Date'].strftime(date_fmt)
-        code = row['Patient Code'].upper()
-        clsf = row['Classification'].upper()
-        return fmt.format(**locals())
-
     study['Folder Name'] = study.apply(get_folder_name, axis=1)
 
     study.index = study.index + 1  # one indexed
@@ -59,60 +65,53 @@ def study_outline(root_folder=None):
     return study
 
 
-# TODO continue here
 def study_data(study):
     """
     Reads all crush data as per study outline dataframe
-    Loops over each Patient Code and reference folder and subfolders
-    Data csv files must have no titles and a summary line at eof with columns:
-    time (seconds), position (um), force (grams)
-    Returns dataframe with each crush's data appended as a row
+    Loops over each Test ID and reads subfolder
+    Data csv files must be unchanged from the output from crush.py
+    Returns dataframe with each crush as a separate row
     """
-    crushes = DataFrame(columns=['patient', 'protocol', 'load',
-                                 'crush', 'summary'])
-    for patient in study.index:
-        # Assumes folder structure is broken up by study date then patient ID
-        path = Path('{}/{}/{}/'.format(study.path[patient],
-                                       study.folder[patient],
-                                       study.subfolder[patient]))
-        data_files = [file for file in os.listdir(path) if file[-4:] == '.csv']
-        data_files.sort()
+
+    def get_creation_date(filepath):
+        if platform.system() == 'Windows':
+            epoch_time = os.path.getctime(filepath)
+        else:
+            # Does not support LINUX!
+            epoch_time = os.stat(filepath).st_birthtime
+        return pd.to_datetime(epoch_time, unit='s')
+
+    crushes = DataFrame(columns=['Test ID',
+                                 'Datetime',
+                                 'Protocol',
+                                 'Load',
+                                 'Data'])
+    crush_pattern = re.compile(r"(?P<protocol>\w+)-"
+                               r"(?P<load>\d+.?\d*)g"
+                               r"-?\d*.csv")
+    for test in study.index:
+        path = PATH / study.loc[test, 'Folder Name']
+        files = [path / file for file in os.listdir(path)]
 
         # Read all patient crush data and add to dataframe
-        for filename in data_files:
-            data = pd.read_csv(path / filename,
-                               names=['time', 'position', 'force'],
-                               skipfooter=1, engine='python')  # skip summary
-            # Correct units and set index to datetime
-            data['position'] = data['position'] / 1000  # um
-            data['force'] = (data['force'] / 1000) * 9.81  # grams
-            data['time'] = pd.to_timedelta(data.time, unit='s')
-            data = data.set_index('time')
-            # Units are stored in dataframe as metadata for convenience
-            data.units = {'position': 'mm', 'force': 'N'}
-            with open(path / filename) as file:
-                for i, line in enumerate(file):
-                    if i == data.shape[0]:
-                        summary = line
-                    elif i > data.shape[0]:
-                        break
-            name_comps = filename.lower().split('_')  # details in csv name
+        for file in files:
+            crush_match = crush_pattern.match(file.name)
+            if not crush_match:
+                continue
 
-            # Append to end of crushes
+            # Read and set index to timestamp
+            data = pd.read_csv(file)
+            data['Timestamp (s)'] = pd.to_timedelta(data['Timestamp (s)'],
+                                                    unit='s')
+            data = data.set_index('Timestamp (s)')
+
+            # Parse meta data and append to end of crushes
             crushes = crushes.append({
-                'patient': patient,
-                'protocol': name_comps[0],
-                'load': name_comps[1].split('.')[0],
-                'crush': data,
-                'summary': summary
-            }, ignore_index=True)
-
-    crushes['protocol'] = crushes.protocol.map({  # fix protocol names
-        'constantforce': 'hold',
-        'constantpos': 'stop',
-        'constantposition': 'stop',
-        'multicrush': 'multi-stop'})
-    crushes.index.name = 'crush'
+                'Test ID': test,
+                'Datetime': get_creation_date(file),
+                'Protocol': crush_match.group('protocol'),
+                'Load': float(crush_match.group('load')),
+                'Data': data}, ignore_index=True)
 
     return crushes
 
