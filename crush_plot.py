@@ -284,20 +284,23 @@ def time_plot(crushes, max_num=8):
     force = 'Force (N)'
 
     # Make plot
-    fig, axes = plt.subplots(nrows=2, sharex=True)
+    fig = plt.figure()
+    p_ax = plt.subplot2grid((2, 7), (0, 0), colspan=5)
+    f_ax = plt.subplot2grid((2, 7), (1, 0), colspan=5, sharex=p_ax)
     for i, num in enumerate(crushes.index):
         if i == max_num:
             break
         crush = crushes.loc[num, 'Data'].copy()
         crush.index = crush.index.total_seconds()
-        crush.plot(y=pos, ax=axes[0], legend=False)
-        crush.plot(y=force, ax=axes[1], legend=False)
+        crush.plot(y=pos, ax=p_ax, legend=False)
+        crush.plot(y=force, ax=f_ax, legend=False)
 
     names = crushes['Summary'].tolist()
-    axes[0].legend(names, loc='best')
-    axes[1].set_xlabel(time)
-    axes[0].set_ylabel(pos)
-    axes[1].set_ylabel(force)
+    fig.legend(names, loc='center right',
+               prop={'size': 8})
+    p_ax.set_ylabel(pos)
+    f_ax.set_ylabel(force)
+    f_ax.set_xlabel(time)
 
 
 def stress_plot(crushes, max_num=8):
@@ -313,8 +316,8 @@ def stress_plot(crushes, max_num=8):
     strain = 'Strain'
 
     # Make plot
-    plt.figure()
-    ax = plt.gca()
+    fig = plt.figure()
+    ax = plt.subplot2grid((20, 1), (1, 0), rowspan=19)
     for i, num in enumerate(crushes.index):
         if i == max_num:
             break
@@ -323,7 +326,9 @@ def stress_plot(crushes, max_num=8):
         plt.plot(crush[strain], crush[stress])
 
     names = crushes['Summary'].tolist()
-    ax.legend(names, loc='best')
+    # ax.legend(names, loc='best')
+    fig.legend(names, loc='upper center', ncol=2,
+               prop={'size': 8})
     ax.set_xlabel(strain)
     ax.set_ylabel(stress)
 
