@@ -7,7 +7,6 @@ Written by Matt MacDonald
 For CIGITI at the Hospital for Sick Children Toronto
 '''
 
-from pandas import Series, DataFrame
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -87,12 +86,15 @@ def study_data(study):
         """
         return 9.81 * weight / 1000
 
-    crushes = DataFrame(columns=['Test ID',
-                                 'Datetime',
-                                 'Protocol',
-                                 'Load',
-                                 'Target',
-                                 'Data'])
+    crushes = pd.DataFrame(columns=['Test ID',
+                                    'Datetime',
+                                    'Patient',
+                                    'Tissue',
+                                    'Protocol',
+                                    'Load',
+                                    'Target',
+                                    'Data',
+                                    'Summary'])
     crush_pattern = re.compile(r"(?P<protocol>\w+)-"
                                r"(?P<load>\d+.?\d*)g"
                                r"-?\d*.csv")
@@ -113,136 +115,223 @@ def study_data(study):
             data = data.set_index('Timestamp (s)')
 
             # Parse meta data and append to end of crushes
-            crushes = crushes.append({
+            crush_dict = {
                 'Test ID': test,
                 'Datetime': get_creation_date(file),
+                'Patient': study.loc[test, 'Patient Code'],
                 'Protocol': crush_match.group('protocol'),
+                'Tissue': study.loc[test, 'Classification'],
                 'Load': f"{float(crush_match.group('load')):.0f}g",
                 'Target': to_force(float(crush_match.group('load'))),
-                'Data': data}, ignore_index=True)
+                'Data': data}
+            crush_dict['Summary'] = "Patient {} ({}), {} crush at {}".format(
+                                    crush_dict['Patient'],
+                                    crush_dict['Tissue'],
+                                    crush_dict['Protocol'],
+                                    crush_dict['Load'])
+            crushes = crushes.append(crush_dict, ignore_index=True)
 
-    crushes.index.name = ' Crush'
+    crushes.index.name = 'Crush'
     return crushes
 
 
-def calculate_data(crushes):
-    """
-    Accepts crushes dataframe, adds calculated data and returns
-    """
+def sample_period(crush):
+    return pd.Timedelta(np.mean(crush.index[1:] - crush.index[:-1]))
 
-    # TODO: Add all error checking to top level function
 
-    def sample_period(crush):
-        return pd.Timedelta(np.mean(crush.index[1:] - crush.index[:-1]))
+def sample_rate(crush):
+    # Returns the average sample rate in Hz
+    return 1 / sample_period(crush).total_seconds()
 
-    def sample_rate(crush):
-        # Returns the average sample rate in Hz
-        return 1 / sample_period(crush).total_seconds()
 
-    def total_time(crush):
-        return pd.Timedelta(crush.index[-1] - crush.index[0])
+def total_time(crush):
+    return crush.index[-1]
 
-    def stage_times(crush):
-        # Return time of transition for each stage
-        # 0 for approach, 1 for crush, 2 for target, 3 for release
-        times = []
-        for stage in range(4):
-            times.append((crush['Stage'] == stage).argmax())
-        return tuple(times)
 
-    def contact_time(crush):
-        return stage_times(crush)[1]
+def stage_times(crush):
+    # Return time of transition for each stage
+    # 0 for approach, 1 for crush, 2 for target, 3 for release
+    times = [pd.Timedelta(0)]
+    for stage in range(1, 4):
+        times.append((crush['Stage'] == stage).argmax())
+    return tuple(times)
 
-    def hanging_load(crush):
-        return crush['Force (N)'][crush.index <= contact_time(crush)].mean()
 
-    def use_rolling_force(crush):
-        # Calculate rolling average force with half second averaging window
-        # Intent is to smooth out noisy force sensor readings
+def stage_durations(crush):
+    times = [*stage_times(crush), total_time(crush)]
+    durations = []
+    for transitions in zip(times[1:], times[:-1]):
+        durations.append(transitions[0] - transitions[1])
+    return tuple(durations)
+
+
+def contact_time(crush):
+    return stage_times(crush)[1]
+
+
+def contact_duration(crush):
+    durations = stage_durations(crush)
+    return durations[1] + durations[2]
+
+
+def contact_position(crush):
+    return crush.loc[contact_time(crush), 'Position (mm)']
+
+
+def target_time(crush):
+    return stage_times(crush)[2]
+
+
+def target_duration(crush):
+    return stage_durations(crush)[2]
+
+
+def target_position(crush):
+    return crush.loc[target_time(crush), 'Position (mm)']
+
+
+def crush_distance(crush):
+    return target_position(crush) - contact_position(crush)
+
+
+# TODO refine this definition to be zero just before contact
+def hanging_force(crush):
+    return crush['Force (N)'][crush.index <= contact_time(crush)].mean()
+
+
+def release_time(crush):
+    return stage_times(crush)[3]
+
+
+def smooth_force(crush, window=None):
+    # Calculate rolling average force with half second averaging window
+    # Intent is to smooth out noisy force sensor readings
+    if window is None:
         window = max(10, int(sample_rate(crush) / 2))
-        mod_crush = crush.copy()
-        mod_crush['Force (N)'] = crush['Force (N)'].rolling(
-            window=window,
-            min_periods=int(window / 4),
-            center=True).mean().fillna(method='bfill')
-        return mod_crush
+    crush = crush.copy()
+    crush['Force (N)'] = crush['Force (N)'].rolling(
+        window=window,
+        min_periods=int(window / 4),
+        center=True).mean().fillna(method='bfill')
+    return crush
 
-    def align_contact(crushes):
-        """
-        Accepts crushes dataframe, adds aligned data and returns
-        """
 
-        aligned_crushes = []
-        for i in crushes.index:
-            crush = crushes.loc[i, 'crush'].copy()
-            touch_time = crushes.loc[i, 'touch_time']
-            touch_position = crush.position[touch_time]
-            tare_force = crushes.loc[i, 'hanging_load']
-            origin_time = crush.index[0]
+def add_stress(crush):
+    # Calculate stress
+    pin_diam = 5.0  # mm
+    pin_area = np.pi * (pin_diam / 2) ** 2
+    crush['Stress (MPa)'] = crush['Force (N)'] / pin_area
+    return crush
 
-            # Offset transient data
-            crush['position'] = crush.position - touch_position
-            crush['force'] = crush.force - tare_force
-            crush['rolling_force'] = crush.rolling_force - tare_force
 
-            # Trim leading data
-            crush = crush[crush.index >= (touch_time - pd.Timedelta('1s'))]
-            # Rezero index
-            crush.index = crush.index - (crush.index[0] - origin_time)
+def add_strain(crush):
+    # Calculate strain (compressive)
+    thickness = abs(contact_position(crush))
+    abs_pos = crush['Position (mm)'].abs()
+    strain = (thickness - abs_pos) / thickness
+    strain[strain < 0] = 0
+    crush['Strain'] = strain
+    return crush
 
-            aligned_crushes.append(crush)
 
-        crushes['aligned_crush'] = aligned_crushes
-        return crushes
+def tare(crush):
+    """
+    Accepts crush dataframe, shifts to account for hanging load and returns
+    """
+    tare = hanging_force(crush)
+    assert abs(tare) < 0.25, f"Excessive hanging force detected: {tare:.3f}"
+    crush['Force (N)'] = crush['Force (N)'] - tare
+    return crush
 
-    # Adds to crush transient data
-    crushes['crush'] = crushes.crush.apply(rolling_force)
 
-    # Adds to crush data
-    crushes['total_time'] = crushes.crush.apply(total_time)
-    crushes['sample_period'] = crushes.crush.apply(sample_period)
-    crushes['sample_rate'] = crushes.crush.apply(sample_rate)
-    crushes['touch_time'] = crushes.crush.apply(touch_time)
-    crushes['hanging_load'] = crushes.crush.apply(hanging_load)
-    crushes.units = {'sample_rate': 'Hz',
-                     'hanging_load': 'N'
-                     }  # only if not obvious from dtype
+def trim(crush):
+    """
+    Accepts crush dataframe, trims N sec before contact and after release
+    Index is rezeroed
+    """
+    lead_sec = 1
+    lead_time = pd.Timedelta(f'{int(lead_sec)}s')
+    crush = crush[crush.index >= (contact_time(crush) - lead_time)]
+    crush = crush[crush.index <= release_time(crush)]
+    crush.index = crush.index - crush.index[0]
+    return crush
 
-    # Adds crush transient subsets
-    crushes = align_contact(crushes)
 
+def modify(crushes):
+    """
+    Accepts crushes dataframe, modifies transient data and returns
+    """
+    crushes['Data'] = crushes['Data'].apply(smooth_force)
+    crushes['Data'] = crushes['Data'].apply(tare)
+    crushes['Data'] = crushes['Data'].apply(add_stress)
+    crushes['Data'] = crushes['Data'].apply(add_strain)
+    crushes['Data'] = crushes['Data'].apply(trim)
     return crushes
 
 
-def plot_data(crushes, align=False):
+def time_plot(crushes, max_num=8):
     """
     Accepts crushes dataframe or subset and plots the transient crush data
+    as a time series graph
     """
 
-    if isinstance(crushes, Series):  # in case a single row is input
-        crushes = DataFrame(crushes).T
+    if isinstance(crushes, pd.Series):  # in case a single row is input
+        crushes = pd.DataFrame(crushes).T
 
+    # Strings shorthand
+    time = 'Time (s)'
+    pos = 'Position (mm)'
+    force = 'Force (N)'
+
+    # Make plot
     fig, axes = plt.subplots(nrows=2, sharex=True)
-    max_ncrush = 10
-    for i in crushes.index:
-        if i == max_ncrush:
+    for i, num in enumerate(crushes.index):
+        if i == max_num:
             break
-        if align:
-            data = crushes.loc[i, 'aligned_crush']
-        else:
-            data = crushes.loc[i, 'crush']
-        data.plot(y='position', ax=axes[0], legend=False)
-        data.plot(y='rolling_force', ax=axes[1], legend=False)
-    names = ('Patient ' + crushes.patient.map(str) + ': ' + crushes.load +
-             ' ' + crushes.protocol + ' crush').tolist()
+        crush = crushes.loc[num, 'Data'].copy()
+        crush.index = crush.index.total_seconds()
+        crush.plot(y=pos, ax=axes[0], legend=False)
+        crush.plot(y=force, ax=axes[1], legend=False)
+
+    names = crushes['Summary'].tolist()
     axes[0].legend(names, loc='best')
-    axes[0].set_ylabel('position (mm)')
-    axes[1].set_ylabel('force (N)')
-    plt.show()
+    axes[1].set_xlabel(time)
+    axes[0].set_ylabel(pos)
+    axes[1].set_ylabel(force)
+
+
+def stress_plot(crushes, max_num=8):
+    """
+    Accepts crushes dataframe or subset and plots a stress-strain graph
+    """
+
+    if isinstance(crushes, pd.Series):  # in case a single row is input
+        crushes = pd.DataFrame(crushes).T
+
+    # Strings shorthand
+    stress = 'Stress (MPa)'
+    strain = 'Strain'
+
+    # Make plot
+    plt.figure()
+    ax = plt.gca()
+    for i, num in enumerate(crushes.index):
+        if i == max_num:
+            break
+        crush = crushes.loc[num, 'Data'].copy()
+        crush.index = crush.index.total_seconds()
+        plt.plot(crush[strain], crush[stress])
+
+    names = crushes['Summary'].tolist()
+    ax.legend(names, loc='best')
+    ax.set_xlabel(strain)
+    ax.set_ylabel(stress)
 
 
 if __name__ == "__main__":
-    study = study_outline('study.csv', 'study-data')
+    study = study_outline(PATH)
     crushes = study_data(study)
-    crushes = calculate_data(crushes)
-    plot_data(crushes, align=True)
+    crushes = modify(crushes)
+    time_plot(crushes)
+    stress_plot(crushes)
+    plt.show()
