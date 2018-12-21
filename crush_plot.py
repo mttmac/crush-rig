@@ -80,21 +80,15 @@ def study_data(study):
             epoch_time = os.stat(filepath).st_birthtime
         return pd.to_datetime(epoch_time, unit='s')
 
-    def to_force(weight):
-        """
-        Converts weight in grams to force in N at standard earth gravity.
-        """
-        return 9.81 * weight / 1000
-
-    crushes = pd.DataFrame(columns=['Test ID',
-                                    'Datetime',
-                                    'Patient',
-                                    'Tissue',
-                                    'Protocol',
-                                    'Load',
-                                    'Target',
-                                    'Data',
-                                    'Summary'])
+    features = ['Test ID',
+                'Datetime',
+                'Patient',
+                'Tissue',
+                'Protocol',
+                'Load',
+                'Summary',
+                'Data']
+    crushes = pd.DataFrame(columns=features)
     crush_pattern = re.compile(r"(?P<protocol>\w+)-"
                                r"(?P<load>\d+.?\d*)g"
                                r"-?\d*.csv")
@@ -118,11 +112,10 @@ def study_data(study):
             crush_dict = {
                 'Test ID': test,
                 'Datetime': get_creation_date(file),
-                'Patient': study.loc[test, 'Patient Code'],
-                'Protocol': crush_match.group('protocol'),
-                'Tissue': study.loc[test, 'Classification'],
+                'Patient': study.loc[test, 'Patient Code'].upper(),
+                'Tissue': study.loc[test, 'Classification'].upper(),
+                'Protocol': crush_match.group('protocol').lower(),
                 'Load': f"{float(crush_match.group('load')):.0f}g",
-                'Target': to_force(float(crush_match.group('load'))),
                 'Data': data}
             crush_dict['Summary'] = "Patient {} ({}), {} crush at {}".format(
                                     crush_dict['Patient'],
@@ -165,6 +158,15 @@ def stage_durations(crush):
     return tuple(durations)
 
 
+def stage_repetition(crush):
+    # Returns the start of stage 0 again if any
+    after = release_time(crush)
+    rep = (crush.loc[after:, 'Stage'] == 0).argmax()
+    if rep == after:
+        return None
+    return rep
+
+
 def contact_time(crush):
     return stage_times(crush)[1]
 
@@ -176,6 +178,23 @@ def contact_duration(crush):
 
 def contact_position(crush):
     return crush.loc[contact_time(crush), 'Position (mm)']
+
+
+def contact_force(crush):
+    return crush.loc[contact_time(crush), 'Force (N)']
+
+
+def approach_duration(crush):
+    return stage_durations(crush)[0]
+
+
+def movement_duration(crush):
+    durations = stage_durations(crush)
+    return durations[0] + durations[1]
+
+
+def crush_duration(crush):
+    return stage_durations(crush)[1]
 
 
 def target_time(crush):
@@ -190,8 +209,32 @@ def target_position(crush):
     return crush.loc[target_time(crush), 'Position (mm)']
 
 
+def target_force(crush):
+    return crush.loc[target_time(crush), 'Force (N)']
+
+
+def release_time(crush):
+    return stage_times(crush)[3]
+
+
+def release_duration(crush):
+    return stage_durations(crush)[3]
+
+
+def release_position(crush):
+    return crush.loc[release_time(crush), 'Position (mm)']
+
+
+def release_force(crush):
+    return crush.loc[release_time(crush), 'Force (N)']
+
+
 def crush_distance(crush):
     return target_position(crush) - contact_position(crush)
+
+
+def force_relaxation(crush):
+    return target_force(crush) - release_force(crush)
 
 
 # TODO refine this definition to be zero just before contact
@@ -199,20 +242,17 @@ def hanging_force(crush):
     return crush['Force (N)'][crush.index <= contact_time(crush)].mean()
 
 
-def release_time(crush):
-    return stage_times(crush)[3]
-
-
 def smooth_force(crush, window=None):
     # Calculate rolling average force with half second averaging window
     # Intent is to smooth out noisy force sensor readings
+    # Raw readings stored for future reference
     if window is None:
         window = max(10, int(sample_rate(crush) / 2))
-    crush = crush.copy()
+    crush['Raw Force (N)'] = crush['Force (N)'].copy()
     crush['Force (N)'] = crush['Force (N)'].rolling(
         window=window,
         min_periods=int(window / 4),
-        center=True).mean().fillna(method='bfill')
+        center=False).mean().fillna(method='bfill')
     return crush
 
 
@@ -221,6 +261,8 @@ def add_stress(crush):
     pin_diam = 5.0  # mm
     pin_area = np.pi * (pin_diam / 2) ** 2
     crush['Stress (MPa)'] = crush['Force (N)'] / pin_area
+    no_contact_mask = (crush['Stage'] == 0) | (crush['Stage'] == 3)
+    crush.loc[no_contact_mask, 'Stress (MPa)'] = 0
     return crush
 
 
@@ -234,7 +276,7 @@ def add_strain(crush):
     return crush
 
 
-def tare(crush):
+def tare_force(crush):
     """
     Accepts crush dataframe, shifts to account for hanging load and returns
     """
@@ -244,17 +286,75 @@ def tare(crush):
     return crush
 
 
-def trim(crush):
+def trim_time(crush, lead_time):
     """
     Accepts crush dataframe, trims N sec before contact and after release
-    Index is rezeroed
+    Rezeros the index to the start
+    lead_time must be pd.Timedelta object
     """
-    lead_sec = 1
-    lead_time = pd.Timedelta(f'{int(lead_sec)}s')
     crush = crush[crush.index >= (contact_time(crush) - lead_time)]
-    crush = crush[crush.index <= release_time(crush)]
+    crush = crush[crush.index < release_time(crush)]
     crush.index = crush.index - crush.index[0]
     return crush
+
+
+def rezero_target(crush, offset):
+    """
+    Rezeros index to an optional offset to the target
+    offset must be pd.Timedelta object
+    """
+    time = target_time(crush)
+    crush.index = crush.index - (time - offset)
+    return crush
+
+
+def select_stage(crush, stage):
+    assert stage in crush['Stage'].values, "Stage input not found in transient"
+    return crush.loc[crush['Stage'] == stage, :]
+
+
+def split(crushes):
+    """
+    Divides all multi-crushes into seperate crush instances
+    Tracks repetitions with a new repetition column
+    Suggest running before modify() or calculate()
+    """
+    crushes['Repetition'] = 0
+    multis = crushes[crushes['Protocol'].str.contains('multi')]
+
+    for num in multis.index:
+        crush = multis.loc[num, 'Data']
+        summary = multis.loc[num, 'Summary'].split('crush')
+        crush_dict = {
+            'Test ID': multis.loc[num, 'Test ID'],
+            'Datetime': multis.loc[num, 'Datetime'],
+            'Patient': multis.loc[num, 'Patient'],
+            'Tissue': multis.loc[num, 'Tissue'],
+            'Protocol': multis.loc[num, 'Protocol'][6:],  # remove multi_
+            'Load': multis.loc[num, 'Load']}
+
+        rep_num = 0
+        searching = True
+        while searching:
+            rep = stage_repetition(crush)
+            if rep is None:
+                sub_crush = crush.copy()
+                searching = False
+            else:
+                sub_crush = crush.loc[crush.index < rep, :].copy()
+                crush = crush.loc[rep:, :]
+
+            crush_dict.update({
+                'Summary': f"{summary[0]}crush [{rep_num}]{summary[1]}",
+                'Data': sub_crush,
+                'Repetition': rep_num})
+            crushes = crushes.append(crush_dict, ignore_index=True)
+            rep_num += 1
+
+    for num in multis.index.tolist():
+        crushes = crushes.drop(num)
+
+    return crushes
 
 
 def modify(crushes):
@@ -262,14 +362,38 @@ def modify(crushes):
     Accepts crushes dataframe, modifies transient data and returns
     """
     crushes['Data'] = crushes['Data'].apply(smooth_force)
-    crushes['Data'] = crushes['Data'].apply(tare)
+    crushes['Data'] = crushes['Data'].apply(tare_force)
     crushes['Data'] = crushes['Data'].apply(add_stress)
     crushes['Data'] = crushes['Data'].apply(add_strain)
-    crushes['Data'] = crushes['Data'].apply(trim)
     return crushes
 
 
-def time_plot(crushes, max_num=8):
+def calculate(crushes):
+    """
+    Adds calculated statistics about each crush transient and returns
+    Suggest running modify() first to get expected results
+    """
+
+    def to_force(weight):
+        """
+        Converts weight in grams to force in N at standard earth gravity.
+        """
+        return 9.81 * weight / 1000
+
+    for i, num in enumerate(crushes.index):
+        crush = crushes.loc[num, 'Data']
+
+        # Target force of crush
+        load_g = float(crushes.loc[num, 'Load'][:-1])
+        crushes.loc[num, 'Target (N)'] = to_force(load_g)
+
+        # Force relation after target achieved
+        crushes.loc[num, 'Relaxation (N)'] = force_relaxation(crush)
+
+    return crushes
+
+
+def time_plot(crushes, max_num=10, **kwargs):
     """
     Accepts crushes dataframe or subset and plots the transient crush data
     as a time series graph
@@ -278,65 +402,102 @@ def time_plot(crushes, max_num=8):
     if isinstance(crushes, pd.Series):  # in case a single row is input
         crushes = pd.DataFrame(crushes).T
 
-    # Strings shorthand
-    time = 'Time (s)'
-    pos = 'Position (mm)'
-    force = 'Force (N)'
-
     # Make plot
     fig = plt.figure()
     p_ax = plt.subplot2grid((2, 7), (0, 0), colspan=5)
     f_ax = plt.subplot2grid((2, 7), (1, 0), colspan=5, sharex=p_ax)
-    for i, num in enumerate(crushes.index):
-        if i == max_num:
-            break
-        crush = crushes.loc[num, 'Data'].copy()
-        crush.index = crush.index.total_seconds()
-        crush.plot(y=pos, ax=p_ax, legend=False)
-        crush.plot(y=force, ax=f_ax, legend=False)
+    p_ax.set_ylabel('Position (mm)')
+    f_ax.set_ylabel('Force (N)')
+    f_ax.set_xlabel('Time (s)')
 
-    names = crushes['Summary'].tolist()
+    gen_plot(crushes, 'Position (mm)', max_num=max_num, ax=p_ax, **kwargs)
+    gen_plot(crushes, 'Force (N)', max_num=max_num, ax=f_ax, **kwargs)
+
+    names = crushes['Summary'].tolist()[:min(len(crushes), max_num)]
     fig.legend(names, loc='center right',
                prop={'size': 8})
-    p_ax.set_ylabel(pos)
-    f_ax.set_ylabel(force)
-    f_ax.set_xlabel(time)
 
 
-def stress_plot(crushes, max_num=8):
+def gen_plot(crushes, labels, max_num=10, ax=None,
+             options={'trim': True, 'align': True}):
     """
-    Accepts crushes dataframe or subset and plots a stress-strain graph
+    Accepts crushes dataframe or subset and plots a single graph
+    Input labels must be y label or a tuple of x and y labels (x, y)
     """
 
     if isinstance(crushes, pd.Series):  # in case a single row is input
         crushes = pd.DataFrame(crushes).T
+    if isinstance(labels, str):
+        labels = tuple([labels])
 
-    # Strings shorthand
-    stress = 'Stress (MPa)'
-    strain = 'Strain'
+    # Prep for aligning data if needed
+    lead_time = pd.Timedelta('1s')
+    if options['align']:
+        max_offset = crushes['Data'].apply(crush_duration).max() + lead_time
 
     # Make plot
-    fig = plt.figure()
-    ax = plt.subplot2grid((20, 1), (1, 0), rowspan=19)
+    new = ax is None
+    if new:
+        fig = plt.figure()
+        ax = plt.subplot2grid((20, 1), (1, 0), rowspan=19)
+        if len(labels) > 1:
+            ax.set_xlabel(labels[0])
+            ax.set_ylabel(labels[1])
+        else:
+            ax.set_xlabel('Time (s)')
+            ax.set_ylabel(labels[0])
+
     for i, num in enumerate(crushes.index):
         if i == max_num:
             break
-        crush = crushes.loc[num, 'Data'].copy()
-        crush.index = crush.index.total_seconds()
-        plt.plot(crush[strain], crush[stress])
+        crush = crushes.loc[num, 'Data']
+        if options['trim']:
+            crush = trim_time(crush, lead_time)
+        if options['align']:
+            crush = rezero_target(crush, max_offset)
+        if len(labels) > 1:
+            x = crush[labels[0]]
+            y = crush[labels[1]]
+        else:
+            x = crush.index.total_seconds()
+            y = crush[labels[0]]
+        ax.plot(x, y)
 
-    names = crushes['Summary'].tolist()
-    # ax.legend(names, loc='best')
-    fig.legend(names, loc='upper center', ncol=2,
-               prop={'size': 8})
-    ax.set_xlabel(strain)
-    ax.set_ylabel(stress)
+    if new:
+        names = crushes['Summary'].tolist()[:min(len(crushes), max_num)]
+        fig.legend(names, loc='upper center', ncol=2,
+                   prop={'size': 8})
+    return ax
+
+
+def stress_plot(crushes, **kwargs):
+    """
+    Accepts crushes dataframe or subset and plots a stress-strain graph
+    """
+    gen_plot(crushes, ('Strain', 'Stress (MPa)'), **kwargs)
+
+
+def position_plot(crushes, **kwargs):
+    """
+    Accepts crushes dataframe or subset and plots a position graph
+    """
+    gen_plot(crushes, 'Position (mm)', **kwargs)
+
+
+def force_plot(crushes, **kwargs):
+    """
+    Accepts crushes dataframe or subset and plots a position graph
+    """
+    gen_plot(crushes, 'Force (N)', **kwargs)
 
 
 if __name__ == "__main__":
     study = study_outline(PATH)
     crushes = study_data(study)
+    crushes = split(crushes)
     crushes = modify(crushes)
     time_plot(crushes)
+    position_plot(crushes)
+    force_plot(crushes)
     stress_plot(crushes)
     plt.show()
