@@ -276,6 +276,30 @@ def add_strain(crush):
     return crush
 
 
+def add_stiffness(crush):
+    """
+    Fits a 3rd order curve to log stress vs strain to estimate
+    strain dependent stiffness
+    Only does so for crush stage with NaNs otherwise
+    """
+    crush['Fit Stress (Mpa)'] = np.nan
+    crush['Stiffness (Mpa)'] = np.nan
+
+    mask = crush['Stage'] == 1  # crush
+    x = crush.loc[mask, 'Strain']
+    y = crush.loc[mask, 'Stress (MPa)']
+
+    z = np.polyfit(x, np.log(y), 3)
+    f = np.poly1d(z)
+    df = f.deriv(1)
+    y_h = np.exp(f(x))
+    dy_h = np.exp(f(x)) * df(x)
+
+    crush.loc[mask, 'Fit Stress (MPa)'] = y_h
+    crush.loc[mask, 'Stiffness (MPa)'] = dy_h
+    return crush
+
+
 def tare_force(crush):
     """
     Accepts crush dataframe, shifts to account for hanging load and returns
@@ -309,6 +333,13 @@ def rezero_target(crush, offset):
 
 
 def select_stage(crush, stage):
+    # 0 for approach, 1 for crush, 2 for target, 3 for release
+    stages = {'approach': 0,
+              'crush': 1,
+              'target': 2,
+              'release': 3}
+    if stage in stages.keys():
+        stage = stages[stage]
     assert stage in crush['Stage'].values, "Stage input not found in transient"
     return crush.loc[crush['Stage'] == stage, :]
 
@@ -365,6 +396,7 @@ def modify(crushes):
     crushes['Data'] = crushes['Data'].apply(tare_force)
     crushes['Data'] = crushes['Data'].apply(add_stress)
     crushes['Data'] = crushes['Data'].apply(add_strain)
+    crushes['Data'] = crushes['Data'].apply(add_stiffness)
     return crushes
 
 
@@ -486,6 +518,16 @@ def stress_plot(crushes, **kwargs):
     if kwargs:
         options = kwargs
     gen_plot(crushes, ('Strain', 'Stress (MPa)'), **options)
+
+
+def stiffness_plot(crushes, **kwargs):
+    """
+    Accepts crushes dataframe or subset and plots a stress-strain graph
+    """
+    options = {'align': False}
+    if kwargs:
+        options = kwargs
+    gen_plot(crushes, ('Strain', 'Stiffness (MPa)'), **options)
 
 
 def position_plot(crushes, **kwargs):
