@@ -20,8 +20,9 @@ import re
 
 from pdb import set_trace
 
-
+# CONSTANTS
 PATH = Path('/Users/mattmacdonald/Data/RAWDATA_CRUSH/')
+PIN_DIAM = 5.0  # mm
 
 
 def study_outline(root_folder=None):
@@ -258,8 +259,7 @@ def smooth_force(crush, window=None):
 
 def add_stress(crush):
     # Calculate stress
-    pin_diam = 5.0  # mm
-    pin_area = np.pi * (pin_diam / 2) ** 2
+    pin_area = np.pi * (PIN_DIAM / 2) ** 2
     crush['Stress (MPa)'] = crush['Force (N)'] / pin_area
     no_contact_mask = (crush['Stage'] == 0) | (crush['Stage'] == 3)
     crush.loc[no_contact_mask, 'Stress (MPa)'] = 0
@@ -380,6 +380,14 @@ def calculate(crushes):
         """
         return 9.81 * weight / 1000
 
+    def to_stress(force):
+        pin_area = np.pi * (PIN_DIAM / 2) ** 2
+        return force / pin_area
+
+    def to_strain(delta, length):
+        delta, length = abs(delta), abs(length)
+        return (length - delta) / length  # compressive positive
+
     for i, num in enumerate(crushes.index):
         crush = crushes.loc[num, 'Data']
 
@@ -387,8 +395,9 @@ def calculate(crushes):
         load_g = float(crushes.loc[num, 'Load'][:-1])
         crushes.loc[num, 'Target (N)'] = to_force(load_g)
 
-        # Force relation after target achieved
-        crushes.loc[num, 'Relaxation (N)'] = force_relaxation(crush)
+        # Stress relaxation after target achieved
+        crushes.loc[num, 'Relaxation (MPa)'] = to_stress(
+            force_relaxation(crush))
 
     return crushes
 
@@ -418,8 +427,7 @@ def time_plot(crushes, max_num=10, **kwargs):
                prop={'size': 8})
 
 
-def gen_plot(crushes, labels, max_num=10, ax=None,
-             options={'trim': True, 'align': True}):
+def gen_plot(crushes, labels, max_num=10, ax=None, trim=True, align=True):
     """
     Accepts crushes dataframe or subset and plots a single graph
     Input labels must be y label or a tuple of x and y labels (x, y)
@@ -432,7 +440,7 @@ def gen_plot(crushes, labels, max_num=10, ax=None,
 
     # Prep for aligning data if needed
     lead_time = pd.Timedelta('1s')
-    if options['align']:
+    if align:
         max_offset = crushes['Data'].apply(crush_duration).max() + lead_time
 
     # Make plot
@@ -451,9 +459,9 @@ def gen_plot(crushes, labels, max_num=10, ax=None,
         if i == max_num:
             break
         crush = crushes.loc[num, 'Data']
-        if options['trim']:
+        if trim:
             crush = trim_time(crush, lead_time)
-        if options['align']:
+        if align:
             crush = rezero_target(crush, max_offset)
         if len(labels) > 1:
             x = crush[labels[0]]
@@ -474,21 +482,30 @@ def stress_plot(crushes, **kwargs):
     """
     Accepts crushes dataframe or subset and plots a stress-strain graph
     """
-    gen_plot(crushes, ('Strain', 'Stress (MPa)'), **kwargs)
+    options = {'align': False}
+    if kwargs:
+        options = kwargs
+    gen_plot(crushes, ('Strain', 'Stress (MPa)'), **options)
 
 
 def position_plot(crushes, **kwargs):
     """
     Accepts crushes dataframe or subset and plots a position graph
     """
-    gen_plot(crushes, 'Position (mm)', **kwargs)
+    options = {'align': False}
+    if kwargs:
+        options = kwargs
+    gen_plot(crushes, 'Position (mm)', **options)
 
 
-def force_plot(crushes, **kwargs):
+def force_plot(crushes, raw=False, **kwargs):
     """
     Accepts crushes dataframe or subset and plots a position graph
     """
-    gen_plot(crushes, 'Force (N)', **kwargs)
+    if raw:
+        gen_plot(crushes, 'Raw Force (N)', **kwargs)
+    else:
+        gen_plot(crushes, 'Force (N)', **kwargs)
 
 
 if __name__ == "__main__":
