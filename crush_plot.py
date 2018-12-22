@@ -9,6 +9,7 @@ For CIGITI at the Hospital for Sick Children Toronto
 
 import pandas as pd
 import numpy as np
+import scipy.signal as signal
 import matplotlib.pyplot as plt
 import seaborn as sns
 
@@ -243,17 +244,27 @@ def hanging_force(crush):
     return crush['Force (N)'][crush.index <= contact_time(crush)].mean()
 
 
-def smooth_force(crush, window=None):
-    # Calculate rolling average force with half second averaging window
+def smooth_force(crush):
+    # Calculate force with a low pass butterworth filter
     # Intent is to smooth out noisy force sensor readings
     # Raw readings stored for future reference
-    if window is None:
-        window = max(10, int(sample_rate(crush) / 2))
-    crush['Raw Force (N)'] = crush['Force (N)'].copy()
-    crush['Force (N)'] = crush['Force (N)'].rolling(
-        window=window,
-        min_periods=int(window / 4),
-        center=False).mean().fillna(method='bfill')
+
+    force = crush['Force (N)']
+    if 'Raw Force (N)' not in crush.columns:
+        crush['Raw Force (N)'] = force.copy()
+
+    # Split before and after the release stage to avoid artifacts
+    rel = release_time(crush)
+    pre = force.index < rel
+    post = force.index >= rel
+    forces = [force[pre], force[post]]
+
+    # Filter on force data
+    N = 3  # Filter order
+    Wn = 0.1  # Cutoff frequency
+    B, A = signal.butter(N, Wn, output='ba')
+    for force in forces:
+        force = signal.filtfilt(B, A, force.values)
     return crush
 
 
@@ -276,11 +287,11 @@ def add_strain(crush):
     return crush
 
 
-def add_stiffness(crush):
+def add_stiffness(crush, order=3, exponential=True):
     """
-    Fits a 3rd order curve to log stress vs strain to estimate
-    strain dependent stiffness
-    Only does so for crush stage with NaNs otherwise
+    Fits a polynomial curve to stress vs strain to estimate strain-dependent
+    stiffness, 3rd order by default, fits to log stress by default
+    Only calculates crush stage with NaNs elsewhere
     """
     crush['Fit Stress (Mpa)'] = np.nan
     crush['Stiffness (Mpa)'] = np.nan
@@ -289,11 +300,18 @@ def add_stiffness(crush):
     x = crush.loc[mask, 'Strain']
     y = crush.loc[mask, 'Stress (MPa)']
 
-    z = np.polyfit(x, np.log(y), 3)
+    if exponential:
+        y = np.log(y)
+
+    z = np.polyfit(x, y, order)
     f = np.poly1d(z)
     df = f.deriv(1)
-    y_h = np.exp(f(x))
-    dy_h = np.exp(f(x)) * df(x)
+    y_h = f(x)
+    dy_h = df(x)
+
+    if exponential:
+        y_h = np.exp(y_h)
+        dy_h = y_h * dy_h
 
     crush.loc[mask, 'Fit Stress (MPa)'] = y_h
     crush.loc[mask, 'Stiffness (MPa)'] = dy_h
@@ -353,6 +371,8 @@ def split(crushes):
     crushes['Repetition'] = 0
     multis = crushes[crushes['Protocol'].str.contains('multi')]
 
+    debug = False  # TODO remove
+
     for num in multis.index:
         crush = multis.loc[num, 'Data']
         summary = multis.loc[num, 'Summary'].split('crush')
@@ -367,6 +387,10 @@ def split(crushes):
         rep_num = 0
         searching = True
         while searching:
+
+            if debug:
+                set_trace()
+
             rep = stage_repetition(crush)
             if rep is None:
                 sub_crush = crush.copy()
@@ -382,6 +406,8 @@ def split(crushes):
             crushes = crushes.append(crush_dict, ignore_index=True)
             rep_num += 1
 
+        debug = False
+
     for num in multis.index.tolist():
         crushes = crushes.drop(num)
 
@@ -392,8 +418,8 @@ def modify(crushes):
     """
     Accepts crushes dataframe, modifies transient data and returns
     """
-    crushes['Data'] = crushes['Data'].apply(smooth_force)
     crushes['Data'] = crushes['Data'].apply(tare_force)
+    crushes['Data'] = crushes['Data'].apply(smooth_force)
     crushes['Data'] = crushes['Data'].apply(add_stress)
     crushes['Data'] = crushes['Data'].apply(add_strain)
     crushes['Data'] = crushes['Data'].apply(add_stiffness)
@@ -434,14 +460,20 @@ def calculate(crushes):
     return crushes
 
 
+def random(crushes):
+    num = np.random.choice(crushes.index)
+    print(f"Crush #{num}")
+    return crushes.loc[[num], :]
+
+
 def time_plot(crushes, max_num=10, **kwargs):
     """
     Accepts crushes dataframe or subset and plots the transient crush data
     as a time series graph
     """
-
-    if isinstance(crushes, pd.Series):  # in case a single row is input
-        crushes = pd.DataFrame(crushes).T
+    options = {'align': True}
+    if kwargs:
+        options = kwargs
 
     # Make plot
     fig = plt.figure()
@@ -451,15 +483,16 @@ def time_plot(crushes, max_num=10, **kwargs):
     f_ax.set_ylabel('Force (N)')
     f_ax.set_xlabel('Time (s)')
 
-    gen_plot(crushes, 'Position (mm)', max_num=max_num, ax=p_ax, **kwargs)
-    gen_plot(crushes, 'Force (N)', max_num=max_num, ax=f_ax, **kwargs)
+    gen_plot(crushes, 'Position (mm)', max_num=max_num, ax=p_ax, **options)
+    gen_plot(crushes, 'Force (N)', max_num=max_num, ax=f_ax, **options)
 
     names = crushes['Summary'].tolist()[:min(len(crushes), max_num)]
     fig.legend(names, loc='center right',
                prop={'size': 8})
 
 
-def gen_plot(crushes, labels, max_num=10, ax=None, trim=True, align=True):
+def gen_plot(crushes, labels, max_num=10,
+             ax=None, trim=True, align=False, fmt=None):
     """
     Accepts crushes dataframe or subset and plots a single graph
     Input labels must be y label or a tuple of x and y labels (x, y)
@@ -501,7 +534,10 @@ def gen_plot(crushes, labels, max_num=10, ax=None, trim=True, align=True):
         else:
             x = crush.index.total_seconds()
             y = crush[labels[0]]
-        ax.plot(x, y)
+        if fmt is None:
+            ax.plot(x, y)
+        else:
+            ax.plot(x, y, fmt)
 
     if new:
         names = crushes['Summary'].tolist()[:min(len(crushes), max_num)]
@@ -514,30 +550,47 @@ def stress_plot(crushes, **kwargs):
     """
     Accepts crushes dataframe or subset and plots a stress-strain graph
     """
-    options = {'align': False}
-    if kwargs:
-        options = kwargs
-    gen_plot(crushes, ('Strain', 'Stress (MPa)'), **options)
+    gen_plot(crushes, ('Strain', 'Stress (MPa)'), **kwargs)
 
 
 def stiffness_plot(crushes, **kwargs):
     """
-    Accepts crushes dataframe or subset and plots a stress-strain graph
+    Accepts crushes dataframe or subset and plots a stiffness vs strain graph
     """
-    options = {'align': False}
-    if kwargs:
-        options = kwargs
-    gen_plot(crushes, ('Strain', 'Stiffness (MPa)'), **options)
+    gen_plot(crushes, ('Strain', 'Stiffness (MPa)'), **kwargs)
+
+
+def fit_plot(crushes, in_time=True, **kwargs):
+    """
+    Accepts crushes dataframe or subset and plots a stress and the fitted
+    polynomial stress curve on teh same graph
+    If in_time=False plots the stresses against each other where perfect
+    fit would be a linear 1 to 1 relationship
+    """
+    if in_time:
+        ax = gen_plot(crushes, ('Strain', 'Stress (MPa)'), **kwargs)
+        gen_plot(crushes, ('Strain', 'Fit Stress (MPa)'),
+                 **kwargs, ax=ax, fmt='k:')
+    else:
+        gen_plot(crushes, ('Stress (MPa)', 'Fit Stress (MPa)'), **kwargs)
 
 
 def position_plot(crushes, **kwargs):
     """
     Accepts crushes dataframe or subset and plots a position graph
     """
-    options = {'align': False}
-    if kwargs:
-        options = kwargs
-    gen_plot(crushes, 'Position (mm)', **options)
+    gen_plot(crushes, 'Position (mm)', **kwargs)
+
+
+def stage_plot(crushes, labels=None, **kwargs):
+    """
+    Accepts crushes dataframe or subset and plots a position graph with stages
+    """
+    if labels is None:
+        labels = ['Force (N)']
+    ax = gen_plot(crushes, 'Stage', fmt='k--', **kwargs)
+    for label in labels:
+        gen_plot(crushes, label, ax=ax, **kwargs)
 
 
 def force_plot(crushes, raw=False, **kwargs):
@@ -555,8 +608,10 @@ if __name__ == "__main__":
     crushes = study_data(study)
     crushes = split(crushes)
     crushes = modify(crushes)
-    time_plot(crushes)
-    position_plot(crushes)
-    force_plot(crushes)
-    stress_plot(crushes)
-    plt.show()
+    crushes = calculate(crushes)
+    # time_plot(crushes)
+    # position_plot(crushes)
+    # force_plot(crushes)
+    # stress_plot(crushes)
+    # stiffness_plot(crushes)
+    # plt.show()
