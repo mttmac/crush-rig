@@ -241,7 +241,7 @@ def force_relaxation(crush):
 
 # TODO refine this definition to be zero just before contact
 def hanging_force(crush):
-    return crush['Force (N)'][crush.index <= contact_time(crush)].mean()
+    return crush['Force (N)'][crush.index < contact_time(crush)].mean()
 
 
 def smooth_force(crush):
@@ -257,14 +257,13 @@ def smooth_force(crush):
     rel = release_time(crush)
     pre = force.index < rel
     post = force.index >= rel
-    forces = [force[pre], force[post]]
 
     # Filter on force data
     N = 3  # Filter order
-    Wn = 0.1  # Cutoff frequency
+    Wn = 0.2  # Cutoff frequency
     B, A = signal.butter(N, Wn, output='ba')
-    for force in forces:
-        force = signal.filtfilt(B, A, force.values)
+    crush.loc[pre, 'Force (N)'] = signal.filtfilt(B, A, force[pre].values)
+    crush.loc[post, 'Force (N)'] = signal.filtfilt(B, A, force[post].values)
     return crush
 
 
