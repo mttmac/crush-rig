@@ -215,6 +215,17 @@ def target_force(crush):
     return crush.loc[target_time(crush), 'Force (N)']
 
 
+def target_error(crush, load):
+
+    def to_force(weight):
+        return 9.81 * weight / 1000
+
+    if isinstance(load, str) and (load[-1] == 'g'):
+        load = load[:-1]
+    set_force = to_force(float(load))
+    return target_force(crush) - set_force
+
+
 def release_time(crush):
     return stage_times(crush)[3]
 
@@ -237,6 +248,10 @@ def crush_distance(crush):
 
 def force_relaxation(crush):
     return target_force(crush) - release_force(crush)
+
+
+def pos_relaxation(crush):
+    return target_position(crush) - release_position(crush)
 
 
 # TODO refine this definition to be zero just before contact
@@ -431,12 +446,6 @@ def calculate(crushes):
     Suggest running modify() first to get expected results
     """
 
-    def to_force(weight):
-        """
-        Converts weight in grams to force in N at standard earth gravity.
-        """
-        return 9.81 * weight / 1000
-
     def to_stress(force):
         pin_area = np.pi * (PIN_DIAM / 2) ** 2
         return force / pin_area
@@ -448,13 +457,48 @@ def calculate(crushes):
     for i, num in enumerate(crushes.index):
         crush = crushes.loc[num, 'Data']
 
-        # Target force of crush
-        load_g = float(crushes.loc[num, 'Load'][:-1])
-        crushes.loc[num, 'Target (N)'] = to_force(load_g)
+        # Tissue thickness
+        thickness = contact_position(crush)
+        crushes.loc[num, 'Thickness (mm)'] = thickness
 
-        # Stress relaxation after target achieved
-        crushes.loc[num, 'Relaxation (MPa)'] = to_stress(
-            force_relaxation(crush))
+        # Crush duration
+        crushes.loc[num, 'Crush Duration (s)'] = crush_duration(crush)
+
+        # Target duration
+        delta = target_duration(crush)
+        crushes.loc[num, 'Target Duration (s)'] = delta
+
+        # Target stress
+        crushes.loc[num, 'Target Stress (MPa)'] = to_stress(
+            target_force(crush))
+
+        # Target strain
+        target_strain = to_strain(target_position(crush))
+        crushes.loc[num, 'Target Stress (MPa)'] = target_strain
+
+        # Max stress
+        crushes.loc[num, 'Max Stress (MPa)'] = crush['Stress (MPa)'].max()
+
+        # Max strain
+        crushes.loc[num, 'Max Strain'] = crush['Strain'].max()
+
+        # Stiffness at percentiles of target strain
+        strain = trim_time(crush, 0)['Strain']
+        for i in range(1, 11):
+            percentile = i * 0.1
+            index = strain[strain >= (percentile * target_strain)].index[0]
+            label = f"Stiffness {percentile * 100}% Target (MPa)"
+            crushes.loc[num, label] = crush.at[index, 'Stiffness (MPa)']
+
+        # Stress relaxation and rate after target
+        stress_relaxation = to_stress(force_relaxation(crush))
+        crushes.loc[num, 'Relaxation (MPa)'] = stress_relaxation
+        crushes.loc[num, 'Relaxation Rate (MPa/s)'] = stress_relaxation / delta
+
+        # Strain relaxation and rate after target
+        strain_relaxation = to_strain(pos_relaxation(crush), thickness)
+        crushes.loc[num, 'Relaxation'] = strain_relaxation
+        crushes.loc[num, 'Relaxation Rate (/s)'] = strain_relaxation / delta
 
     return crushes
 
@@ -465,7 +509,7 @@ def random(crushes):
     return crushes.loc[[num], :]
 
 
-def time_plot(crushes, max_num=10, **kwargs):
+def time_plot(crushes, max_num=10, stress_strain=False, **kwargs):
     """
     Accepts crushes dataframe or subset and plots the transient crush data
     as a time series graph
@@ -474,16 +518,22 @@ def time_plot(crushes, max_num=10, **kwargs):
     if kwargs:
         options = kwargs
 
+    # Set labels
+    if stress_strain:
+        labels = ['Strain', 'Stress (MPa)']
+    else:
+        labels = ['Position (mm)', 'Force (N)']
+
     # Make plot
     fig = plt.figure()
     p_ax = plt.subplot2grid((2, 7), (0, 0), colspan=5)
     f_ax = plt.subplot2grid((2, 7), (1, 0), colspan=5, sharex=p_ax)
-    p_ax.set_ylabel('Position (mm)')
-    f_ax.set_ylabel('Force (N)')
+    p_ax.set_ylabel(labels[0])
+    f_ax.set_ylabel(labels[1])
     f_ax.set_xlabel('Time (s)')
 
-    gen_plot(crushes, 'Position (mm)', max_num=max_num, ax=p_ax, **options)
-    gen_plot(crushes, 'Force (N)', max_num=max_num, ax=f_ax, **options)
+    gen_plot(crushes, labels[0], max_num=max_num, ax=p_ax, **options)
+    gen_plot(crushes, labels[1], max_num=max_num, ax=f_ax, **options)
 
     names = crushes['Summary'].tolist()[:min(len(crushes), max_num)]
     fig.legend(names, loc='center right',
@@ -554,7 +604,7 @@ def stress_plot(crushes, **kwargs):
 
 def stiffness_plot(crushes, **kwargs):
     """
-    Accepts crushes dataframe or subset and plots a stiffness vs strain graph
+    Accepts crushes dataframe or subset and plots a stiffness-strain graph
     """
     gen_plot(crushes, ('Strain', 'Stiffness (MPa)'), **kwargs)
 
@@ -587,6 +637,8 @@ def stage_plot(crushes, labels=None, **kwargs):
     """
     if labels is None:
         labels = ['Force (N)']
+    if isinstance(labels, str):
+        labels = tuple([labels])
     ax = gen_plot(crushes, 'Stage', fmt='k--', **kwargs)
     for label in labels:
         gen_plot(crushes, label, ax=ax, **kwargs)
