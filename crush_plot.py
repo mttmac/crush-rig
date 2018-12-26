@@ -156,7 +156,8 @@ def stage_durations(crush):
     times = [*stage_times(crush), total_time(crush)]
     durations = []
     for transitions in zip(times[1:], times[:-1]):
-        durations.append(transitions[0] - transitions[1])
+        delta = (transitions[0] - transitions[1]).total_seconds()
+        durations.append(delta)
     return tuple(durations)
 
 
@@ -215,6 +216,14 @@ def target_force(crush):
     return crush.loc[target_time(crush), 'Force (N)']
 
 
+def target_relaxation(crush):
+    return target_force(crush) - release_force(crush)
+
+
+def target_movement(crush):
+    return release_position(crush) - target_position(crush)
+
+
 def target_error(crush, load):
 
     def to_force(weight):
@@ -244,14 +253,6 @@ def release_force(crush):
 
 def crush_distance(crush):
     return target_position(crush) - contact_position(crush)
-
-
-def force_relaxation(crush):
-    return target_force(crush) - release_force(crush)
-
-
-def pos_relaxation(crush):
-    return target_position(crush) - release_position(crush)
 
 
 # TODO refine this definition to be zero just before contact
@@ -323,13 +324,20 @@ def add_stiffness(crush, order=3, exponential=True):
     y_h = f(x)
     dy_h = df(x)
 
+    percent_x = [x * 0.1 for x in range(0, 10)]
+    percent_y = f(percent_x)
+    percent_dy = df(percent_x)
+
     if exponential:
         y_h = np.exp(y_h)
         dy_h = y_h * dy_h
 
+        percent_y = np.exp(percent_y)
+        percent_dy = percent_y * percent_dy
+
     crush.loc[mask, 'Fit Stress (MPa)'] = y_h
     crush.loc[mask, 'Stiffness (MPa)'] = dy_h
-    return crush
+    return crush, zip(percent_x, percent_y, percent_dy)
 
 
 def tare_force(crush):
@@ -345,23 +353,30 @@ def tare_force(crush):
 def trim_time(crush, lead_time):
     """
     Accepts crush dataframe, trims N sec before contact and after release
-    Rezeros the index to the start
-    lead_time must be pd.Timedelta object
     """
+    lead_time = pd.Timedelta(lead_time)
     crush = crush[crush.index >= (contact_time(crush) - lead_time)]
     crush = crush[crush.index < release_time(crush)]
-    crush.index = crush.index - crush.index[0]
     return crush
 
 
-def rezero_target(crush, offset):
+def rezero(crush, offset=0, zero_index=None):
     """
-    Rezeros index to an optional offset to the target
-    offset must be pd.Timedelta object
+    Rezeros the index with an optional offset from zero
+    Can optionally specify an index to be zero other than the first
     """
-    time = target_time(crush)
-    crush.index = crush.index - (time - offset)
+    if zero_index is None:
+        zero_index = crush.index[0]
+    offset = pd.Timedelta(offset)
+    crush.index = crush.index - (zero_index - offset)
     return crush
+
+
+def rezero_target(crush, offset=0):
+    """
+    Rezeros index to an optional offset to the target time
+    """
+    return rezero(crush, offset, zero_index=target_time(crush))
 
 
 def select_stage(crush, stage):
@@ -436,7 +451,6 @@ def modify(crushes):
     crushes['Data'] = crushes['Data'].apply(smooth_force)
     crushes['Data'] = crushes['Data'].apply(add_stress)
     crushes['Data'] = crushes['Data'].apply(add_strain)
-    crushes['Data'] = crushes['Data'].apply(add_stiffness)
     return crushes
 
 
@@ -452,13 +466,16 @@ def calculate(crushes):
 
     def to_strain(delta, length):
         delta, length = abs(delta), abs(length)
-        return (length - delta) / length  # compressive positive
+        return delta / length  # compressive positive
 
     for i, num in enumerate(crushes.index):
         crush = crushes.loc[num, 'Data']
 
+        # Add stiffness based on fit curve
+        crush, percentiles = add_stiffness(crush)
+
         # Tissue thickness
-        thickness = contact_position(crush)
+        thickness = abs(contact_position(crush))
         crushes.loc[num, 'Thickness (mm)'] = thickness
 
         # Crush duration
@@ -469,12 +486,12 @@ def calculate(crushes):
         crushes.loc[num, 'Target Duration (s)'] = delta
 
         # Target stress
-        crushes.loc[num, 'Target Stress (MPa)'] = to_stress(
-            target_force(crush))
+        target_stress = crush.loc[target_time(crush), 'Stress (MPa)']
+        crushes.loc[num, 'Target Stress (MPa)'] = target_stress
 
         # Target strain
-        target_strain = to_strain(target_position(crush))
-        crushes.loc[num, 'Target Stress (MPa)'] = target_strain
+        target_strain = crush.loc[target_time(crush), 'Strain']
+        crushes.loc[num, 'Target Strain (MPa)'] = target_strain
 
         # Max stress
         crushes.loc[num, 'Max Stress (MPa)'] = crush['Stress (MPa)'].max()
@@ -482,23 +499,23 @@ def calculate(crushes):
         # Max strain
         crushes.loc[num, 'Max Strain'] = crush['Strain'].max()
 
-        # Stiffness at percentiles of target strain
-        strain = trim_time(crush, 0)['Strain']
-        for i in range(1, 11):
-            percentile = i * 0.1
-            index = strain[strain >= (percentile * target_strain)].index[0]
-            label = f"Stiffness {percentile * 100}% Target (MPa)"
-            crushes.loc[num, label] = crush.at[index, 'Stiffness (MPa)']
+        # Stiffness at percentiles of strain (0% - 90%)
+        for percentile in percentiles:
+            strain = percentile[0]
+            stiffness = percentile[2]
+            label = f"Stiffness {strain * 100:.0f}% Strain (MPa)"
+            crushes.loc[num, label] = stiffness
 
-        # Stress relaxation and rate after target
-        stress_relaxation = to_stress(force_relaxation(crush))
+        # Stress relaxation after target
+        stress_relaxation = to_stress(target_relaxation(crush))
         crushes.loc[num, 'Relaxation (MPa)'] = stress_relaxation
+
+        # Stress relaxation rate after target
         crushes.loc[num, 'Relaxation Rate (MPa/s)'] = stress_relaxation / delta
 
-        # Strain relaxation and rate after target
-        strain_relaxation = to_strain(pos_relaxation(crush), thickness)
-        crushes.loc[num, 'Relaxation'] = strain_relaxation
-        crushes.loc[num, 'Relaxation Rate (/s)'] = strain_relaxation / delta
+        # Holding strain after target
+        holding_strain = to_strain(target_movement(crush), thickness)
+        crushes.loc[num, 'Holding Strain'] = holding_strain
 
     return crushes
 
