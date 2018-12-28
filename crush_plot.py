@@ -302,11 +302,12 @@ def add_strain(crush):
     return crush
 
 
-def add_stiffness(crush, order=3, exponential=True):
+def add_stiffness(crush, order=3, exponential=True, percentiles=False):
     """
     Fits a polynomial curve to stress vs strain to estimate strain-dependent
     stiffness, 3rd order by default, fits to log stress by default
     Only calculates crush stage with NaNs elsewhere
+    Optionally can return calculated values at percentiles of strain
     """
     crush['Fit Stress (Mpa)'] = np.nan
     crush['Stiffness (Mpa)'] = np.nan
@@ -324,20 +325,26 @@ def add_stiffness(crush, order=3, exponential=True):
     y_h = f(x)
     dy_h = df(x)
 
-    percent_x = [x * 0.1 for x in range(0, 10)]
-    percent_y = f(percent_x)
-    percent_dy = df(percent_x)
+    if percentiles:
+        percent_x = [x * 0.1 for x in range(0, 11)]
+        percent_y = f(percent_x)
+        percent_dy = df(percent_x)
 
     if exponential:
         y_h = np.exp(y_h)
         dy_h = y_h * dy_h
 
-        percent_y = np.exp(percent_y)
-        percent_dy = percent_y * percent_dy
+        if percentiles:
+            percent_y = np.exp(percent_y)
+            percent_dy = percent_y * percent_dy
 
     crush.loc[mask, 'Fit Stress (MPa)'] = y_h
     crush.loc[mask, 'Stiffness (MPa)'] = dy_h
-    return crush, zip(percent_x, percent_y, percent_dy)
+
+    if percentiles:
+        return crush, zip(percent_x, percent_y, percent_dy)
+
+    return crush
 
 
 def tare_force(crush):
@@ -400,8 +407,6 @@ def split(crushes):
     crushes['Repetition'] = 0
     multis = crushes[crushes['Protocol'].str.contains('multi')]
 
-    debug = False  # TODO remove
-
     for num in multis.index:
         crush = multis.loc[num, 'Data']
         summary = multis.loc[num, 'Summary'].split('crush')
@@ -416,10 +421,6 @@ def split(crushes):
         rep_num = 0
         searching = True
         while searching:
-
-            if debug:
-                set_trace()
-
             rep = stage_repetition(crush)
             if rep is None:
                 sub_crush = crush.copy()
@@ -435,8 +436,6 @@ def split(crushes):
             crushes = crushes.append(crush_dict, ignore_index=True)
             rep_num += 1
 
-        debug = False
-
     for num in multis.index.tolist():
         crushes = crushes.drop(num)
 
@@ -451,6 +450,7 @@ def modify(crushes):
     crushes['Data'] = crushes['Data'].apply(smooth_force)
     crushes['Data'] = crushes['Data'].apply(add_stress)
     crushes['Data'] = crushes['Data'].apply(add_strain)
+    crushes['Data'] = crushes['Data'].apply(add_stiffness)
     return crushes
 
 
@@ -471,9 +471,6 @@ def calculate(crushes):
     for i, num in enumerate(crushes.index):
         crush = crushes.loc[num, 'Data']
 
-        # Add stiffness based on fit curve
-        crush, percentiles = add_stiffness(crush)
-
         # Tissue thickness
         thickness = abs(contact_position(crush))
         crushes.loc[num, 'Thickness (mm)'] = thickness
@@ -493,18 +490,16 @@ def calculate(crushes):
         target_strain = crush.loc[target_time(crush), 'Strain']
         crushes.loc[num, 'Target Strain (MPa)'] = target_strain
 
-        # Max stress
-        crushes.loc[num, 'Max Stress (MPa)'] = crush['Stress (MPa)'].max()
+        # Stiffness at contact
+        time = contact_time(crush)
+        stiffness = crush.loc[time, 'Stiffness (MPa)']
+        crushes.loc[num, 'Contact Stiffness (MPa)'] = stiffness
 
-        # Max strain
-        crushes.loc[num, 'Max Strain'] = crush['Strain'].max()
-
-        # Stiffness at percentiles of strain (0% - 90%)
-        for percentile in percentiles:
-            strain = percentile[0]
-            stiffness = percentile[2]
-            label = f"Stiffness {strain * 100:.0f}% Strain (MPa)"
-            crushes.loc[num, label] = stiffness
+        # Stiffness at target
+        # Use index one before target since target stiffness is NaN
+        time = crush.index[crush.index.get_loc(target_time(crush)) - 1]
+        stiffness = crush.loc[time, 'Stiffness (MPa)']
+        crushes.loc[num, 'Target Stiffness (MPa)'] = stiffness
 
         # Stress relaxation after target
         stress_relaxation = to_stress(target_relaxation(crush))
@@ -513,9 +508,9 @@ def calculate(crushes):
         # Stress relaxation rate after target
         crushes.loc[num, 'Relaxation Rate (MPa/s)'] = stress_relaxation / delta
 
-        # Holding strain after target
+        # Holding delta strain after target
         holding_strain = to_strain(target_movement(crush), thickness)
-        crushes.loc[num, 'Holding Strain'] = holding_strain
+        crushes.loc[num, 'Target Delta Strain'] = holding_strain
 
     return crushes
 
