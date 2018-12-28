@@ -510,7 +510,7 @@ def calculate(crushes):
 
         # Holding delta strain after target
         holding_strain = to_strain(target_movement(crush), thickness)
-        crushes.loc[num, 'Target Delta Strain'] = holding_strain
+        crushes.loc[num, 'Holding Strain'] = holding_strain
 
     return crushes
 
