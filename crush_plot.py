@@ -7,6 +7,8 @@ Written by Matt MacDonald
 For CIGITI at the Hospital for Sick Children Toronto
 '''
 
+# IMPORTS
+
 import pandas as pd
 import numpy as np
 import scipy.signal as signal
@@ -21,10 +23,14 @@ import re
 
 from pdb import set_trace
 
+
 # CONSTANTS
+
 PATH = Path('/Users/mattmacdonald/Data/RAWDATA_CRUSH/')
 PIN_DIAM = 5.0  # mm
 
+
+# IMPORT FUNCTIONS
 
 def study_outline(root_folder=None):
     """
@@ -32,6 +38,7 @@ def study_outline(root_folder=None):
     in the root folder containing study outline details, at minimum:
     Patient Code,Procedure Date,Gender,DOB,Procedure,Tissue,Surgeon,
     Notes,Issues,Histology,Classification
+    File must be named "*MasterList.csv"
     Assumes all data is kept in sub folders in root folder
     Returns dataframe with Test ID as index
     """
@@ -47,14 +54,15 @@ def study_outline(root_folder=None):
     # Read outline file
     if root_folder is None:
         root_folder = Path.cwd()
-    files = glob.glob(str(root_folder / '*.csv'))
-    assert len(files) == 1, "Root data folder must only contain one .csv file."
+    files = glob.glob(str(root_folder / '*Master.csv'))
+    assert len(files) == 1, ('Root data folder must only contain one master '
+                             'csv file.')
     study = pd.read_csv(root_folder / files[0])
 
     # Cleanup and organize information, including data subfolders
     study = study.fillna('N/A')
     study['Procedure Date'] = pd.to_datetime(study['Procedure Date'],
-                                             format='%Y-%m-%d')
+                                             format='%m/%d/%Y')
     study['DOB'] = pd.to_datetime(study['DOB'],
                                   format='%m/%d/%Y')
     study['Age'] = study['Procedure Date'] - study['DOB']
@@ -64,6 +72,48 @@ def study_outline(root_folder=None):
     study = study.rename_axis('Test ID')
 
     return study
+
+
+def study_targets(root_folder=None):
+    """
+    Reads targets for the dataset from a csv file in the root folder
+    File must be named "*Targets.csv"
+    Returns dataframe
+    """
+    # Read targets file
+    if root_folder is None:
+        root_folder = Path.cwd()
+    files = glob.glob(str(root_folder / '*Targets.csv'))
+    assert len(files) == 1, ('Root data folder must only contain one targets '
+                             'csv file.')
+    targets = pd.read_csv(root_folder / files[0])
+
+    # Cleanup and remove invalid targets
+    path_scores = []
+    path_scores.append(pd.to_numeric(targets['Corwyn Score']
+                                     .replace('W', np.nan)))
+    path_scores.append(pd.to_numeric(targets['Cathy Score']
+                                     .replace('W', np.nan)))
+    valid = ~(path_scores[0].isna() & path_scores[1].isna())
+    has_both = ~(path_scores[0].isna() | path_scores[1].isna())
+    assert not np.any(has_both), "Implement averaging of pathological scores."
+
+    # Use whichever pathologist score is available without averaging
+    path_score = pd.concat([path_scores[0][valid], path_scores[1][valid]],
+                           axis=1).max(axis=1)
+    path_score.name = 'Damage Score'  # 0, 1, 2, 3 categorical
+
+    id_labels = ['Patient Code', 'Protocol', 'Tissue', 'Load (g)']
+    targets = targets.loc[valid, id_labels]
+    for label in id_labels:
+        if label == 'Load (g)':
+            func = int
+        else:
+            func = str.upper
+        targets[label] = targets[label].apply(func)
+    targets = pd.concat([targets, path_score], axis=1)
+
+    return targets
 
 
 def study_data(study):
@@ -85,9 +135,9 @@ def study_data(study):
     features = ['Test ID',
                 'Datetime',
                 'Patient',
-                'Tissue',
                 'Protocol',
-                'Load',
+                'Tissue',
+                'Load (g)',
                 'Summary',
                 'Data']
     crushes = pd.DataFrame(columns=features)
@@ -115,20 +165,22 @@ def study_data(study):
                 'Test ID': test,
                 'Datetime': get_creation_date(file),
                 'Patient': study.loc[test, 'Patient Code'].upper(),
+                'Protocol': crush_match.group('protocol').upper(),
                 'Tissue': study.loc[test, 'Classification'].upper(),
-                'Protocol': crush_match.group('protocol').lower(),
-                'Load': f"{float(crush_match.group('load')):.0f}g",
+                'Load (g)': int(crush_match.group('load')),
                 'Data': data}
-            crush_dict['Summary'] = "Patient {} ({}), {} crush at {}".format(
+            crush_dict['Summary'] = "Patient {} ({}), {} crush at {}g".format(
                                     crush_dict['Patient'],
                                     crush_dict['Tissue'],
                                     crush_dict['Protocol'],
-                                    crush_dict['Load'])
+                                    crush_dict['Load (g)'])
             crushes = crushes.append(crush_dict, ignore_index=True)
 
     crushes.index.name = 'Crush'
     return crushes
 
+
+# ANALYSIS FUNCTIONS
 
 def sample_period(crush):
     return pd.Timedelta(np.mean(crush.index[1:] - crush.index[:-1]))
@@ -148,7 +200,7 @@ def stage_times(crush):
     # 0 for approach, 1 for crush, 2 for target, 3 for release
     times = [pd.Timedelta(0)]
     for stage in range(1, 4):
-        times.append((crush['Stage'] == stage).argmax())
+        times.append((crush['Stage'] == stage).idxmax())
     return tuple(times)
 
 
@@ -164,7 +216,7 @@ def stage_durations(crush):
 def stage_repetition(crush):
     # Returns the start of stage 0 again if any
     after = release_time(crush)
-    rep = (crush.loc[after:, 'Stage'] == 0).argmax()
+    rep = (crush.loc[after:, 'Stage'] == 0).idxmax()
     if rep == after:
         return None
     return rep
@@ -416,7 +468,7 @@ def split(crushes):
             'Patient': multis.loc[num, 'Patient'],
             'Tissue': multis.loc[num, 'Tissue'],
             'Protocol': multis.loc[num, 'Protocol'][6:],  # remove multi_
-            'Load': multis.loc[num, 'Load']}
+            'Load (g)': multis.loc[num, 'Load (g)']}
 
         rep_num = 0
         searching = True
@@ -514,6 +566,15 @@ def calculate(crushes):
 
     return crushes
 
+
+def merge(crushes, targets):
+    """
+    Adds targets for each crush available then removes non-features and returns
+    """
+
+
+
+# PLOT FUNCTIONS
 
 def random(crushes):
     num = np.random.choice(crushes.index)
@@ -666,8 +727,10 @@ def force_plot(crushes, raw=False, **kwargs):
         gen_plot(crushes, 'Force (N)', **kwargs)
 
 
+# MAIN
 if __name__ == "__main__":
     study = study_outline(PATH)
+    targets = study_targets(PATH)
     crushes = study_data(study)
     crushes = split(crushes)
     crushes = modify(crushes)
