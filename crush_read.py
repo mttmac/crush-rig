@@ -178,7 +178,7 @@ def study_data(study):
                 'Patient': study.loc[test, 'Patient Code'].upper(),
                 'Protocol': crush_match.group('protocol').upper(),
                 'Tissue': study.loc[test, 'Classification'].upper(),
-                'Load (g)': int(float(crush_match.group('load'))),
+                'Load (g)': np.int64(float(crush_match.group('load'))),
                 'Data': data}
             crush_dict['Summary'] = "Patient {} ({}), {} crush at {}g".format(
                                     crush_dict['Patient'],
@@ -582,14 +582,19 @@ def prep(crushes, targets):
     """
     Adds targets for each crush available, removes non-features,
     one hot encodes the categorical features and returns X, y
+    Note that crushes gets modified (side affect)
     """
-    crushes['Damage Score'] = np.nan
-    features = ['Patient',
-                'Protocol',
-                'Tissue',
-                ]
 
+    # Get list of features
+    crushes['Pathologist'] = np.nan  # new feature in targets
+    idx = list(range(2, 5)) + list(range(8, len(crushes.columns)))
+    features = crushes.columns[idx]
+
+    # Match targets to crushes, last column is targets
+    crushes['Damage Score'] = np.nan
     for num in targets.index:
+        path = targets.loc[num, 'Pathologist']
+        score = targets.loc[num, 'Damage Score']
         protocol = targets.loc[num, 'Protocol']
         if 'MULTI_' in protocol:
             protocol = protocol[6:]
@@ -601,7 +606,20 @@ def prep(crushes, targets):
                'TISS': targets.loc[num, 'Tissue'],
                'LOAD': targets.loc[num, 'Load (g)']
                }
-    return None, None
+        mask = crushes['Patient'] == sel['CODE']
+        mask = mask & (crushes['Protocol'] == sel['PROT'])
+        mask = mask & (crushes['Tissue'] == sel['TISS'])
+        mask = mask & (crushes['Load (g)'] == sel['LOAD'])
+        if multi:
+            mask = mask & (crushes['Repetition'] > 0)
+
+        crushes.loc[mask, 'Pathologist'] = path
+        crushes.loc[mask, 'Damage Score'] = score
+
+    X = crushes.loc[:, features].copy()
+    y = crushes.iloc[:, [-1]].copy()
+
+    return X, y
 
 
 # MAIN
@@ -613,9 +631,3 @@ if __name__ == "__main__":
     crushes = modify(crushes)
     crushes = calculate(crushes)
     X, y = prep(crushes, targets)
-    # time_plot(crushes)
-    # position_plot(crushes)
-    # force_plot(crushes)
-    # stress_plot(crushes)
-    # stiffness_plot(crushes)
-    # plt.show()
