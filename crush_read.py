@@ -596,7 +596,7 @@ def calculate(crushes):
 def prep(crushes, targets):
     """
     Adds targets for each crush available, removes non-features,
-    one hot encodes the categorical features and returns X, y
+    encodes the categorical feature labels and returns X, y
     Note that crushes gets modified (side affect)
     """
 
