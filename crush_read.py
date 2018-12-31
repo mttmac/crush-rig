@@ -97,7 +97,7 @@ def study_targets(root_folder=None):
                                      .replace('W', np.nan)))
     valid = ~(path_scores[0].isna() & path_scores[1].isna())
     has_both = ~(path_scores[0].isna() | path_scores[1].isna())
-    assert not np.any(has_both), "Implement averaging of pathological scores."
+    assert not np.any(has_both), "Implement averaging of pathological scores"
 
     # Use whichever pathologist score is available without averaging
     path_score = pd.concat([path_scores[0][valid], path_scores[1][valid]],
@@ -148,6 +148,8 @@ def study_data(study):
                 'Patient',
                 'Protocol',
                 'Tissue',
+                'Gender',
+                'Age (days)',
                 'Load (g)',
                 'Summary',
                 'Data']
@@ -178,7 +180,10 @@ def study_data(study):
                 'Patient': study.loc[test, 'Patient Code'].upper(),
                 'Protocol': crush_match.group('protocol').upper(),
                 'Tissue': study.loc[test, 'Classification'].upper(),
-                'Load (g)': np.int64(float(crush_match.group('load'))),
+                'Gender': study.loc[test, 'Gender'].upper(),
+                'Age (days)': int((study.loc[test, 'Procedure Date'] -
+                                   study.loc[test, 'DOB']).days),
+                'Load (g)': int(float(crush_match.group('load'))),
                 'Data': data}
             crush_dict['Summary'] = "Patient {} ({}), {} crush at {}g".format(
                                     crush_dict['Patient'],
@@ -187,6 +192,9 @@ def study_data(study):
                                     crush_dict['Load (g)'])
             crushes = crushes.append(crush_dict, ignore_index=True)
 
+    types = {'Age (days)': np.int64,
+             'Load (g)': np.int64}
+    crushes = crushes.astype(types)
     crushes.index.name = 'Crush'
     return crushes
 
@@ -468,20 +476,27 @@ def split(crushes):
     Suggest running before modify() or calculate()
     """
     crushes['Repetition'] = 0  # zero if no multiple crushes
-    multis = crushes[crushes['Protocol'].str.contains('multi')]
+    multis = crushes[crushes['Protocol'].str.contains('MULTI')]
 
     for num in multis.index:
         crush = multis.loc[num, 'Data']
         summary = multis.loc[num, 'Summary'].split('crush')
-        crush_dict = {
-            'Test ID': multis.loc[num, 'Test ID'],
-            'Datetime': multis.loc[num, 'Datetime'],
-            'Patient': multis.loc[num, 'Patient'],
-            'Tissue': multis.loc[num, 'Tissue'],
-            'Protocol': multis.loc[num, 'Protocol'][6:],  # remove multi_
-            'Load (g)': multis.loc[num, 'Load (g)']}
 
-        rep_num = 1  # first crush is one
+        # Copy existing features to new split crushes
+        crush_dict = {
+            'Protocol': multis.loc[num, 'Protocol'][6:]}  # remove MULTI_
+        features = ['Test ID',
+                    'Datetime',
+                    'Patient',
+                    'Tissue',
+                    'Gender',
+                    'Age (days)',
+                    'Load (g)']
+        for feat in features:
+            crush_dict[feat] = multis.loc[num, feat]
+
+        # Split into crushes
+        rep_num = 1  # first is rep one
         searching = True
         while searching:
             rep = stage_repetition(crush)
@@ -587,7 +602,7 @@ def prep(crushes, targets):
 
     # Get list of features
     crushes['Pathologist'] = np.nan  # new feature in targets
-    idx = list(range(2, 5)) + list(range(8, len(crushes.columns)))
+    idx = list(range(2, 7)) + list(range(10, len(crushes.columns)))
     features = crushes.columns[idx]
 
     # Match targets to crushes, last column is targets
@@ -596,30 +611,47 @@ def prep(crushes, targets):
         path = targets.loc[num, 'Pathologist']
         score = targets.loc[num, 'Damage Score']
         protocol = targets.loc[num, 'Protocol']
-        if 'MULTI_' in protocol:
+        if 'MULTI' in protocol:
             protocol = protocol[6:]
             multi = True
         else:
             multi = False
-        sel = {'CODE': targets.loc[num, 'Patient Code'],
-               'PROT': protocol,
-               'TISS': targets.loc[num, 'Tissue'],
-               'LOAD': targets.loc[num, 'Load (g)']
-               }
-        mask = crushes['Patient'] == sel['CODE']
-        mask = mask & (crushes['Protocol'] == sel['PROT'])
-        mask = mask & (crushes['Tissue'] == sel['TISS'])
-        mask = mask & (crushes['Load (g)'] == sel['LOAD'])
+        mask = crushes['Protocol'] == protocol
         if multi:
             mask = mask & (crushes['Repetition'] > 0)
 
+        sel = {'CODE': targets.loc[num, 'Patient Code'],
+               'TISS': targets.loc[num, 'Tissue'],
+               'LOAD': targets.loc[num, 'Load (g)']}
+        mask = mask & (crushes['Patient'] == sel['CODE'])
+        mask = mask & (crushes['Tissue'] == sel['TISS'])
+        mask = mask & (crushes['Load (g)'] == sel['LOAD'])
+
         crushes.loc[mask, 'Pathologist'] = path
-        crushes.loc[mask, 'Damage Score'] = score
+        crushes.loc[mask, 'Damage Score'] = np.int64(score)
 
-    X = crushes.loc[:, features].copy()
-    y = crushes.iloc[:, [-1]].copy()
+    # Make a copy of features and targets removing any without targets
+    valid = ~crushes['Damage Score'].isna()
+    X = crushes.loc[valid, features].copy()
+    y = crushes.loc[valid, crushes.columns[-1]].copy()
 
-    return X, y
+    # One hot encode categorical variables
+    categorical = list(X.dtypes[X.dtypes == 'object'].index)
+    legend = {}
+    for label in categorical:
+        cats = X[label].unique()
+        if label == 'Patient':
+            idx_cats = [np.int64(c[2:]) for c in cats]
+        else:
+            assert len(cats) == 2, "Unknown categorical feature"
+            idx_cats = np.int64([0, 1])
+
+        for i, cat in enumerate(cats):
+            idx = idx_cats[i]
+            legend[f"{label}[{idx}]"] = cat
+            X.loc[X[label] == cat, label] = idx
+
+    return X, y, legend
 
 
 # MAIN
@@ -630,4 +662,4 @@ if __name__ == "__main__":
     crushes = split(crushes)
     crushes = modify(crushes)
     crushes = calculate(crushes)
-    X, y = prep(crushes, targets)
+    X, y, legend = prep(crushes, targets)
