@@ -594,10 +594,7 @@ def calculate(crushes):
 
         # Stress relaxation after target
         stress_relaxation = to_stress(target_relaxation(crush))
-        crushes.loc[num, 'Relaxation (MPa)'] = stress_relaxation
-
-        # Stress relaxation rate after target
-        crushes.loc[num, 'Relaxation Rate (MPa/s)'] = stress_relaxation / delta
+        crushes.loc[num, 'Relaxation Stress (MPa)'] = stress_relaxation
 
         # Holding delta strain after target
         holding_strain = to_strain(target_movement(crush), thickness)
