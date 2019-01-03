@@ -115,14 +115,22 @@ def study_targets(root_folder=None):
     paths = paths[valid]
 
     id_labels = ['Patient Code', 'Protocol', 'Tissue', 'Load (g)']
-    targets = targets.loc[valid, id_labels]
+    abs_deltas = targets.loc[valid, 'Absolute Delta (um)']
+    deltas = targets.loc[valid, 'Percent Delta']
+    pscores = targets.loc[valid, 'Pscore']
+    ids = targets.loc[valid, id_labels]
     for label in id_labels:
         if label == 'Load (g)':
             func = int
         else:
             func = str.upper
-        targets[label] = targets[label].apply(func)
-    targets = pd.concat([targets, paths, path_score], axis=1)
+        ids[label] = ids[label].apply(func)
+    targets = pd.concat([ids,
+                         abs_deltas,
+                         deltas,
+                         pscores,
+                         paths,
+                         path_score], axis=1)
 
     return targets
 
@@ -475,7 +483,9 @@ def split(crushes):
     Tracks repetitions with a new repetition column
     Suggest running before modify() or calculate()
     """
-    crushes['Repetition'] = 0  # zero if no multiple crushes
+    # Init new features
+    crushes['Repetition'] = np.nan
+    crushes['Post Thickness (mm)'] = np.nan
     multis = crushes[crushes['Protocol'].str.contains('MULTI')]
 
     for num in multis.index:
@@ -496,21 +506,24 @@ def split(crushes):
             crush_dict[feat] = multis.loc[num, feat]
 
         # Split into crushes
-        rep_num = 1  # first is rep one
+        rep_num = 0  # first has no repetition
         searching = True
         while searching:
             rep = stage_repetition(crush)
             if rep is None:
                 sub_crush = crush.copy()
                 searching = False
+                thickness = np.nan
             else:
                 sub_crush = crush.loc[crush.index < rep, :].copy()
                 crush = crush.loc[rep:, :]
+                thickness = abs(contact_position(crush))
 
             crush_dict.update({
                 'Summary': f"{summary[0]}crush [{rep_num}]{summary[1]}",
                 'Data': sub_crush,
-                'Repetition': rep_num})
+                'Repetition': rep_num,
+                'Post Thickness (mm)': thickness})
             crushes = crushes.append(crush_dict, ignore_index=True)
             rep_num += 1
 
@@ -600,16 +613,29 @@ def prep(crushes, targets):
     Note that crushes gets modified (side affect)
     """
 
-    # Get list of features
-    crushes['Pathologist'] = np.nan  # new feature in targets
-    idx = list(range(2, 7)) + list(range(10, len(crushes.columns)))
-    features = crushes.columns[idx]
+    # Init new features
+    crushes['Pathologist'] = np.nan
+    crushes['Serosal Thickness (mm)'] = np.nan
+    crushes['Post Serosal Thickness (mm)'] = np.nan
+
+    # Get list of features and targets
+    excluded = ['Test ID',
+                'Datetime',
+                'Patient',
+                'Load (g)',
+                'Summary',
+                'Data']
+    feature_names = list(crushes.columns)
+    for ex in excluded:
+        if ex in feature_names:
+            feature_names.remove(ex)
+    target_names = ['Damage Score', 'Pscore']
+    for name in target_names:
+        crushes[name] = np.nan  # init
 
     # Match targets to crushes, last column is targets
-    crushes['Damage Score'] = np.nan
     for num in targets.index:
-        path = targets.loc[num, 'Pathologist']
-        score = targets.loc[num, 'Damage Score']
+        # Identify corresponding crushes
         protocol = targets.loc[num, 'Protocol']
         if 'MULTI' in protocol:
             protocol = protocol[6:]
@@ -618,7 +644,9 @@ def prep(crushes, targets):
             multi = False
         mask = crushes['Protocol'] == protocol
         if multi:
-            mask = mask & (crushes['Repetition'] > 0)
+            mask = mask & (~crushes['Repetition'].isna())  # ignore non-repeats
+        elif 'Repetition' in crushes.columns:
+            mask = mask & (crushes['Repetition'].isna())  # ignore repeats
 
         sel = {'CODE': targets.loc[num, 'Patient Code'],
                'TISS': targets.loc[num, 'Tissue'],
@@ -627,31 +655,64 @@ def prep(crushes, targets):
         mask = mask & (crushes['Tissue'] == sel['TISS'])
         mask = mask & (crushes['Load (g)'] == sel['LOAD'])
 
-        crushes.loc[mask, 'Pathologist'] = path
-        crushes.loc[mask, 'Damage Score'] = np.int64(score)
+        # Assign new feature values
+        crushes.loc[mask, 'Pathologist'] = targets.loc[num, 'Pathologist']
+        delta = targets.loc[num, 'Absolute Delta (um)'] / 1000
+        percent_delta = targets.loc[num, 'Percent Delta'] / 100
+        thickness = delta / percent_delta
+        crushes.loc[mask, 'Serosal Thickness (mm)'] = thickness
+        crushes.loc[mask, 'Post Serosal Thickness (mm)'] = thickness - delta
 
-    # Make a copy of features and targets removing any without targets
+        # set_trace()
+
+        # Add actual targets
+        for name in target_names:
+            crushes.loc[mask, name] = targets.loc[num, name]
+
+    # Make a copy of features and targets removing any without pathology rating
     valid = ~crushes['Damage Score'].isna()
-    X = crushes.loc[valid, features].copy()
-    y = crushes.loc[valid, crushes.columns[-1]].copy()
+    X = crushes.loc[valid, feature_names].copy()
+    y = crushes.loc[valid, target_names].copy()
 
     # One hot encode categorical variables
     categorical = list(X.dtypes[X.dtypes == 'object'].index)
     legend = {}
+    renames = {}
     for label in categorical:
         cats = X[label].unique()
         if label == 'Patient':
             idx_cats = [np.int64(c[2:]) for c in cats]
+        elif len(cats) == 1:  # constant features not useful
+            legend[f"{label}[{cats[0]}]"] = '(excluded)'
+            X = X.drop(label, axis=1)
+            continue
         else:
             assert len(cats) == 2, "Unknown categorical feature"
-            idx_cats = np.int64([0, 1])
+            idx_cats = [False, True]
 
         for i, cat in enumerate(cats):
             idx = idx_cats[i]
-            legend[f"{label}[{idx}]"] = cat
+            legend[f"{label}[{cat}]"] = str(idx)
             X.loc[X[label] == cat, label] = idx
 
+        renames[label] = f"{label} ({cats[0]} or {cats[1]})"
+    X = X.rename(renames, axis=1)
+
     return X, y, legend
+
+
+def refine(y):
+    '''
+    Input the target values and change them to be boolean and more descriptive.
+    '''
+    y['Significant Serosal Change'] = y['Pscore'] < 0.05  # 5% significance
+    y = y.drop('Pscore', axis=1)
+
+    y['Tissue Damage'] = y['Damage Score'] > 0
+    y['Major Tissue Damage'] = y['Damage Score'] > 1
+    y = y.drop('Damage Score', axis=1)
+
+    return y
 
 
 # MAIN
@@ -663,3 +724,4 @@ if __name__ == "__main__":
     crushes = modify(crushes)
     crushes = calculate(crushes)
     X, y, legend = prep(crushes, targets)
+    y = refine(y)
