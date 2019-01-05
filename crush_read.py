@@ -381,15 +381,48 @@ def add_strain(crush):
     return crush
 
 
-def add_stiffness(crush, order=3, exponential=True, percentiles=False):
+def add_stiffness(crush, N_pieces=10):
+    # Calculate the stiffness based on the piecewise slope of the stress
+    # strain curve using the range of sample points before each time point.
+    # The range is calculated based on the number of sample points divided
+    # up into the number of pieces
+
+    def slope(x, y):
+        x = np.stack([x, np.ones(len(x))], axis=1)
+        line = np.linalg.lstsq(x, y, rcond=None)
+        return line[0][0]
+
+    crush['Stiffness (MPa)'] = np.nan
+    mask = crush['Stage'] == 1  # crush
+    strain = crush.loc[mask, 'Strain'].values
+    stress = crush.loc[mask, 'Stress (MPa)'].values
+    N = len(strain)
+    if N // N_pieces < 1:
+        return crush  # no valid stiffness
+    indices = range(0, N, N // N_pieces)
+    index_ranges = [(i[1], slice(i[0], i[1], 1))
+                    for i in zip(indices[:-1], indices[1:])]
+
+    stiff = np.ones(N) * np.nan
+    for idx, rng in index_ranges:
+        stiffness = slope(strain[rng], stress[rng])
+        if stiffness < 0:
+            continue  # leave as nan
+        stiff[idx] = stiffness
+
+    crush.loc[mask, 'Stiffness (MPa)'] = stiff
+    return crush
+
+
+def add_stiffness_fit(crush, order=3, exponential=True, percentiles=False):
     """
     Fits a polynomial curve to stress vs strain to estimate strain-dependent
     stiffness, 3rd order by default, fits to log stress by default
     Only calculates crush stage with NaNs elsewhere
     Optionally can return calculated values at percentiles of strain
     """
-    crush['Fit Stress (Mpa)'] = np.nan
-    crush['Stiffness (Mpa)'] = np.nan
+    crush['Fit Stress (MPa)'] = np.nan
+    crush['Stiffness (MPa)'] = np.nan
 
     mask = crush['Stage'] == 1  # crush
     x = crush.loc[mask, 'Strain']
@@ -582,21 +615,20 @@ def calculate(crushes):
         crushes.loc[num, 'Target Strain (MPa)'] = target_strain
 
         # Stiffness at contact
-        time = contact_time(crush)
-        stiffness = crush.loc[time, 'Stiffness (MPa)']
+        # Assumed to be minimum
+        stiffness = crush['Stiffness (MPa)'].min()
         crushes.loc[num, 'Contact Stiffness (MPa)'] = stiffness
 
         # Stiffness at target
-        # Use index one before target since target stiffness is NaN
-        time = crush.index[crush.index.get_loc(target_time(crush)) - 1]
-        stiffness = crush.loc[time, 'Stiffness (MPa)']
+        # Assumed to be maximum
+        stiffness = crush['Stiffness (MPa)'].max()
         crushes.loc[num, 'Target Stiffness (MPa)'] = stiffness
 
-        # Stress relaxation after target
+        # Delta stress after target reached
         stress_relaxation = to_stress(target_relaxation(crush))
         crushes.loc[num, 'Relaxation Stress (MPa)'] = stress_relaxation
 
-        # Holding delta strain after target
+        # Delta strain after target reached
         holding_strain = to_strain(target_movement(crush), thickness)
         crushes.loc[num, 'Holding Strain'] = holding_strain
 
