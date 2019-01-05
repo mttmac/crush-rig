@@ -381,7 +381,7 @@ def add_strain(crush):
     return crush
 
 
-def add_stiffness(crush, N_pieces=10):
+def add_stiffness(crush, n_pieces=10):
     # Calculate the stiffness based on the piecewise slope of the stress
     # strain curve using the range of sample points before each time point.
     # The range is calculated based on the number of sample points divided
@@ -397,9 +397,9 @@ def add_stiffness(crush, N_pieces=10):
     strain = crush.loc[mask, 'Strain'].values
     stress = crush.loc[mask, 'Stress (MPa)'].values
     N = len(strain)
-    if N // N_pieces < 1:
+    if N // n_pieces < 1:
         return crush  # no valid stiffness
-    indices = range(0, N, N // N_pieces)
+    indices = range(0, N, N // n_pieces)
     index_ranges = [(i[1], slice(i[0], i[1], 1))
                     for i in zip(indices[:-1], indices[1:])]
 
