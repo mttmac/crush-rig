@@ -612,7 +612,7 @@ def calculate(crushes):
 
         # Target strain
         target_strain = crush.loc[target_time(crush), 'Strain']
-        crushes.loc[num, 'Target Strain (MPa)'] = target_strain
+        crushes.loc[num, 'Target Strain'] = target_strain
 
         # Stiffness at contact
         # Assumed to be minimum
