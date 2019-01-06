@@ -730,16 +730,18 @@ def prep(crushes, targets):
     return X, y, legend
 
 
-def refine(y):
+def refine(y, drop=True):
     '''
     Input the target values and change them to be boolean and more descriptive.
     '''
     y['Significant Serosal Change'] = y['Pscore'] < 0.05  # 5% significance
-    y = y.drop('Pscore', axis=1)
 
     y['Tissue Damage'] = y['Damage Score'] > 0
     y['Major Tissue Damage'] = y['Damage Score'] > 1
-    y = y.drop('Damage Score', axis=1)
+
+    if drop:
+        y = y.drop('Pscore', axis=1)
+        y = y.drop('Damage Score', axis=1)
 
     return y
 
