@@ -164,3 +164,10 @@ def force_plot(crushes, raw=False, **kwargs):
         gen_plot(crushes, 'Raw Force (N)', **kwargs)
     else:
         gen_plot(crushes, 'Force (N)', **kwargs)
+
+
+def pressure_plot(crushes, **kwargs):
+    """
+    Accepts crushes dataframe or subset and plots a position graph
+    """
+    gen_plot(crushes, 'Pressure (kPa)', **kwargs)

@@ -362,6 +362,13 @@ def smooth_force(crush):
     return crush
 
 
+def add_pressure(crush):
+    # Calculate pressure applied (same as stress)
+    pin_area = np.pi * (PIN_DIAM / 2) ** 2
+    crush['Pressure (kPa)'] = 1000 * crush['Force (N)'] / pin_area
+    return crush
+
+
 def add_stress(crush):
     # Calculate stress
     pin_area = np.pi * (PIN_DIAM / 2) ** 2
@@ -572,6 +579,7 @@ def modify(crushes):
     """
     crushes['Data'] = crushes['Data'].apply(tare_force)
     crushes['Data'] = crushes['Data'].apply(smooth_force)
+    crushes['Data'] = crushes['Data'].apply(add_pressure)
     crushes['Data'] = crushes['Data'].apply(add_stress)
     crushes['Data'] = crushes['Data'].apply(add_strain)
     crushes['Data'] = crushes['Data'].apply(add_stiffness)
