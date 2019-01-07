@@ -730,16 +730,23 @@ def prep(crushes, targets):
     return X, y, legend
 
 
-def refine(y, drop=True):
+def refine(y, drop_cols=True):
     '''
     Input the target values and change them to be boolean and more descriptive.
     '''
     y['Significant Serosal Change'] = y['Pscore'] < 0.05  # 5% significance
+    y.loc[y['Pscore'].isna(), 'Significant Serosal Change'] = np.nan
 
     y['Tissue Damage'] = y['Damage Score'] > 0
-    y['Major Tissue Damage'] = y['Damage Score'] > 1
+    y.loc[y['Damage Score'].isna(), 'Tissue Damage'] = np.nan
 
-    if drop:
+    y['Major Tissue Damage'] = y['Damage Score'] > 1
+    y.loc[y['Damage Score'].isna(), 'Major Tissue Damage'] = np.nan
+
+    valid = ~(y['Pscore'].isna() | y['Damage Score'].isna())
+    y = y.loc[valid, :]
+
+    if drop_cols:
         y = y.drop('Pscore', axis=1)
         y = y.drop('Damage Score', axis=1)
 
