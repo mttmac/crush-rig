@@ -83,13 +83,20 @@ def single_crush(target_force, target_action='stop', duration=10,
 
     stage = 0  # 0 for approach, 1 for crush, 2 for target, 3 for release
     done = False
+    contact_threshold = 0.5
+    contact_count = 0
     while not done:
         samples = rig.read_movement_and_force()
         samples[2] = convert_force(samples[2])
         forces.append(samples[2])
 
         if stage == 0:
-            if sum(forces) / window >= 0:  # contact
+            if sum(forces) / window >= contact_threshold:  # contact
+                contact_count += 1
+            elif contact_count:
+                contact_count = 0  # reset if contact falls below threshold
+
+            if contact_count > window:  # hysteresis
                 rig.set_max_velocity(crush_velocity)
                 print('Tissue contact made..')
                 stage += 1
