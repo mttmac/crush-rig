@@ -83,7 +83,7 @@ def single_crush(target_force, target_action='stop', duration=10,
 
     stage = 0  # 0 for approach, 1 for crush, 2 for target, 3 for release
     done = False
-    contact_threshold = 0.5
+    contact_threshold = 0.05
     contact_count = 0
     while not done:
         samples = rig.read_movement_and_force()
