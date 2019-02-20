@@ -36,19 +36,37 @@ def disconnect(rig):
 
 
 def convert_force(voltage):
-    # Formula used to convert sensor data voltage reading into Newtons as per
-    # predetermined sensor calibration curve
-    # Calibration curve Oct 24 2018 (g - voltage)
-    # 0 - 298.7
-    # 100 - 334.2
-    # 300 - 405.9
-    # 500 - 477.5
-    # 800 - 585.1
-    # 1000 - 656.5
-    # 1200 - 728.5
-    # R^2 = 1
-    # y = 0.0274x - 8.175
-    return round(0.0274 * int(voltage) - 8.175, 6)
+    """
+    Formula used to convert sensor data voltage reading into Newtons as per
+    predetermined sensor calibration curve
+
+    Calibration curve - Oct 24 2018
+    grams   N       voltage
+    0       0.000   298.7
+    100     0.981   334.2
+    300     2.943   405.9
+    500     4.905   477.5
+    800     7.848   585.1
+    1000    9.810   656.5
+    1200    11.77   728.5
+    R^2 = 1
+    y = 0.0274x - 8.175
+
+    Calibration curve - Feb 19 2019
+    grams   N       voltage
+    0       0.000   305.4
+    100     0.981   341.2
+    300     2.943   413.0
+    500     4.905   484.2
+    800     7.848   592.6
+    1000    9.810   664.6
+    1200    11.77   735.6
+    R^2 = 1
+    y = 0.02733x - 8.3447
+    Shift of approximately 0.17 N (17.3 g)
+    """
+
+    return round(0.02733 * int(voltage) - 8.3447, 6)
 
 
 def single_crush(target_force, target_action='stop', duration=10,
