@@ -3,7 +3,7 @@ lac1.py
 
 This is a simple python interface to the LAC-1 controller produced by SMAC US.
 Note that the home function is specifically aimed at a LCS25-025-xx-x stage
-and should not be used without inspection. 
+and should not be used without inspection.
 Forked from: https://github.com/freespace/smac-lac-1
 
 crush.py
@@ -11,9 +11,17 @@ crush.py
 
 This program runs various tissue crush profiles at programmable force settings
 and stores all movement and force data in a csv transient file.
-It is intended to be used with the precision crush actuator for tissue 
-(precisionCAT) as part of an investigational study in partnership with the 
+It is intended to be used with the precision crush actuator for tissue
+(precisionCAT) as part of an investigational study in partnership with the
 CIGITI lab at the Hospital for Sick Children.
+
+Notebooks
+==================
+
+To protect sensitive information the following is added to .git/config
+[filter "dropoutput_ipynb"]
+    clean = ~/gitlab/ipynb_output_filter/ipynb_output_filter.py
+    smudge = cat
 
 License
 =======
