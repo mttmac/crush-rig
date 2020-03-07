@@ -27,7 +27,7 @@ from pdb import set_trace
 
 # CONSTANTS
 
-PATH = Path('/Users/mattmacdonald/Data/RAWDATA_CRUSH/')
+PATH = Path('/Users/mattmacdonald/Data/RAWDATA_CRUSH_PAPER2/')
 PIN_DIAM = 5.0  # mm
 
 
@@ -55,8 +55,8 @@ def study_outline(root_folder=None):
     # Read outline file
     if root_folder is None:
         root_folder = Path.cwd()
-    files = glob.glob(str(root_folder / '*Master.csv'))
-    assert len(files) == 1, ('Root data folder must only contain one master '
+    files = glob.glob(str(root_folder / '*MASTER*.csv'))
+    assert len(files) == 1, ('Root data folder must contain one master '
                              'csv file.')
     study = pd.read_csv(root_folder / files[0])
 
