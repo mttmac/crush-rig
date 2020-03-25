@@ -663,39 +663,18 @@ def prep(crushes, targets):
 
     # Match targets to crushes, last column is targets
     for num in targets.index:
-        # Identify corresponding crushes
-        protocol = targets.loc[num, 'Protocol']
-        if 'MULTI' in protocol:
-            protocol = protocol[6:]
-            multi = True
-        else:
-            multi = False
-        mask = crushes['Protocol'] == protocol
-        if multi:
-            mask = mask & (~crushes['Repetition'].isna())  # ignore non-repeats
-        elif 'Repetition' in crushes.columns:
-            mask = mask & (crushes['Repetition'].isna())  # ignore repeats
-
-        sel = {'CODE': targets.loc[num, 'Patient Code'],
-               'TISS': targets.loc[num, 'Tissue'],
-               'LOAD': targets.loc[num, 'Load (g)']}
-        mask = mask & (crushes['Patient'] == sel['CODE'])
-        mask = mask & (crushes['Tissue'] == sel['TISS'])
-        mask = mask & (crushes['Load (g)'] == sel['LOAD'])
 
         # Assign new feature values
-        crushes.loc[mask, 'Pathologist'] = targets.loc[num, 'Pathologist']
         delta = targets.loc[num, 'Absolute Delta (um)'] / 1000
         percent_delta = targets.loc[num, 'Percent Delta'] / 100
         thickness = delta / percent_delta
-        crushes.loc[mask, 'Serosal Thickness (mm)'] = thickness
-        crushes.loc[mask, 'Post Serosal Thickness (mm)'] = thickness - delta
-
-        # set_trace()
+        crushes.loc[num, 'Serosal Thickness (mm)'] = thickness
+        crushes.loc[num, 'Post Serosal Thickness (mm)'] = thickness - delta
+        crushes.loc[num, 'Pathologist'] = targets.loc[num, 'Pathologist']
 
         # Add actual targets
         for name in target_names:
-            crushes.loc[mask, name] = targets.loc[num, name]
+            crushes.loc[num, name] = targets.loc[num, name]
 
     # Make a copy of features and targets removing any without pathology rating
     valid = ~crushes['Damage Score'].isna()
