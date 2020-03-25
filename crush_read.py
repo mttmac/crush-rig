@@ -39,7 +39,7 @@ def study_outline(root_folder=None):
     in the root folder containing study outline details, at minimum:
     Patient Code,Procedure Date,Gender,DOB,Procedure,Tissue,Surgeon,
     Notes,Issues,Histology,Classification
-    File must be named "*MasterList.csv"
+    File must be named "*MASTERLIST.csv"
     Assumes all data is kept in sub folders in root folder
     Returns dataframe with Test ID as index
     """
@@ -55,7 +55,7 @@ def study_outline(root_folder=None):
     # Read outline file
     if root_folder is None:
         root_folder = Path.cwd()
-    files = glob.glob(str(root_folder / '*MASTER*.csv'))
+    files = glob.glob(str(root_folder / '*MASTERLIST.csv'))
     assert len(files) == 1, ('Root data folder must contain one master '
                              'csv file.')
     study = pd.read_csv(root_folder / files[0])
@@ -78,14 +78,14 @@ def study_outline(root_folder=None):
 def study_targets(root_folder=None):
     """
     Reads targets for the dataset from a csv file in the root folder
-    File must be named "*Targets.csv"
+    File must be named "*TARGETS.csv"
     Returns dataframe
     """
     # Read targets file
     if root_folder is None:
         root_folder = Path.cwd()
-    files = glob.glob(str(root_folder / '*Targets.csv'))
-    assert len(files) == 1, ('Root data folder must only contain one targets '
+    files = glob.glob(str(root_folder / '*TARGETS.csv'))
+    assert len(files) == 1, ('Root data folder must contain one targets '
                              'csv file.')
     targets = pd.read_csv(root_folder / files[0])
 
@@ -143,16 +143,7 @@ def study_data(study):
     Returns dataframe with each crush as a separate row
     """
 
-    def get_creation_date(filepath):
-        if platform.system() == 'Windows':
-            epoch_time = os.path.getctime(filepath)
-        else:
-            # Does not support LINUX!
-            epoch_time = os.stat(filepath).st_birthtime
-        return pd.to_datetime(epoch_time, unit='s')
-
     features = ['Test ID',
-                'Datetime',
                 'Patient',
                 'Protocol',
                 'Tissue',
@@ -161,6 +152,7 @@ def study_data(study):
                 'Load (g)',
                 'Summary',
                 'Data']
+
     crushes = pd.DataFrame(columns=features)
     crush_pattern = re.compile(r"(?P<protocol>\w+)-"
                                r"(?P<load>\d+.?\d*)g"
@@ -184,7 +176,6 @@ def study_data(study):
             # Parse meta data and append to end of crushes
             crush_dict = {
                 'Test ID': test,
-                'Datetime': get_creation_date(file),
                 'Patient': study.loc[test, 'Patient Code'].upper(),
                 'Protocol': crush_match.group('protocol').upper(),
                 'Tissue': study.loc[test, 'Classification'].upper(),
@@ -471,7 +462,9 @@ def tare_force(crush):
     Accepts crush dataframe, shifts to account for hanging load and returns
     """
     tare = hanging_force(crush)
-    assert abs(tare) < 0.25, f"Excessive hanging force detected: {tare:.3f}"
+    if abs(tare) >= 0.25:
+        set_trace()
+    # assert abs(tare) < 0.25, f"Excessive hanging force detected: {tare:.3f}"
     crush['Force (N)'] = crush['Force (N)'] - tare
     return crush
 
@@ -536,7 +529,6 @@ def split(crushes):
         crush_dict = {
             'Protocol': multis.loc[num, 'Protocol'][6:]}  # remove MULTI_
         features = ['Test ID',
-                    'Datetime',
                     'Patient',
                     'Tissue',
                     'Gender',
@@ -657,7 +649,6 @@ def prep(crushes, targets):
 
     # Get list of features and targets
     excluded = ['Test ID',
-                'Datetime',
                 'Patient',
                 'Load (g)',
                 'Summary',
