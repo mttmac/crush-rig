@@ -590,6 +590,7 @@ def preprocess(crushes, targets):
     crushes['Pathologist'] = np.nan
     crushes['Serosal Thickness (mm)'] = np.nan
     crushes['Post Serosal Thickness (mm)'] = np.nan
+    crushes['Serosal Thickness Change (mm)'] = np.nan
 
     # Get list of features and targets
     excluded = ['Test ID',
@@ -628,6 +629,7 @@ def preprocess(crushes, targets):
         thickness = delta / percent_delta
         crushes.loc[mask, 'Serosal Thickness (mm)'] = thickness
         crushes.loc[mask, 'Post Serosal Thickness (mm)'] = thickness - delta
+        crushes.loc[mask, 'Serosal Thickness Change (mm)'] = delta
 
         # Add actual targets
         for name in target_names:
@@ -665,7 +667,7 @@ def preprocess(crushes, targets):
     return X, y, legend
 
 
-def refine(y, drop_cols=True):
+def classify(y, drop_cols=True):
     '''
     Input the target values and change them to be boolean and more descriptive.
     '''
