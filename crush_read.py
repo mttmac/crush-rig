@@ -510,61 +510,6 @@ def select_stage(crush, stage):
     return crush.loc[crush['Stage'] == stage, :]
 
 
-def split(crushes):
-    """
-    Divides all multi-crushes into seperate crush instances
-    Tracks repetitions with a new repetition column
-    Suggest running before modify() or calculate()
-    """
-    # Init new features
-    crushes['Repetition'] = np.nan
-    crushes['Post Thickness (mm)'] = np.nan
-    multis = crushes[crushes['Protocol'].str.contains('MULTI')]
-
-    for num in multis.index:
-        crush = multis.loc[num, 'Data']
-        summary = multis.loc[num, 'Summary'].split('crush')
-
-        # Copy existing features to new split crushes
-        crush_dict = {
-            'Protocol': multis.loc[num, 'Protocol'][6:]}  # remove MULTI_
-        features = ['Test ID',
-                    'Patient',
-                    'Tissue',
-                    'Gender',
-                    'Age (days)',
-                    'Load (g)']
-        for feat in features:
-            crush_dict[feat] = multis.loc[num, feat]
-
-        # Split into crushes
-        rep_num = 0  # first has no repetition
-        searching = True
-        while searching:
-            rep = stage_repetition(crush)
-            if rep is None:
-                sub_crush = crush.copy()
-                searching = False
-                thickness = np.nan
-            else:
-                sub_crush = crush.loc[crush.index < rep, :].copy()
-                crush = crush.loc[rep:, :]
-                thickness = abs(contact_position(crush))
-
-            crush_dict.update({
-                'Summary': f"{summary[0]}crush [{rep_num}]{summary[1]}",
-                'Data': sub_crush,
-                'Repetition': rep_num,
-                'Post Thickness (mm)': thickness})
-            crushes = crushes.append(crush_dict, ignore_index=True)
-            rep_num += 1
-
-    for num in multis.index.tolist():
-        crushes = crushes.drop(num)
-
-    return crushes
-
-
 def modify(crushes):
     """
     Accepts crushes dataframe, modifies transient data and returns
@@ -635,7 +580,7 @@ def calculate(crushes):
     return crushes
 
 
-def prep(crushes, targets):
+def preprocess(crushes, targets):
     """
     Adds targets for each crush available, removes non-features,
     encodes the categorical feature labels and returns X, y
@@ -658,23 +603,36 @@ def prep(crushes, targets):
         if ex in feature_names:
             feature_names.remove(ex)
     target_names = ['Damage Score', 'Pscore']
+
+    # Init new targets
     for name in target_names:
-        crushes[name] = np.nan  # init
+        crushes[name] = np.nan
 
     # Match targets to crushes, last column is targets
     for num in targets.index:
 
+        # Identify matching crushes by four criteria
+        sel = {'PROT': targets.loc[num, 'Protocol'],
+               'CODE': targets.loc[num, 'Patient Code'],
+               'TISS': targets.loc[num, 'Tissue'],
+               'LOAD': targets.loc[num, 'Load (g)']}
+        mask = crushes['Protocol'] == sel['PROT']
+        mask = mask & (crushes['Patient'] == sel['CODE'])
+        mask = mask & (crushes['Tissue'] == sel['TISS'])
+        mask = mask & (crushes['Load (g)'] == sel['LOAD'])
+        assert mask.sum() == 1, f"Matching error: {mask.sum():d} matches found"
+
         # Assign new feature values
+        crushes.loc[mask, 'Pathologist'] = targets.loc[num, 'Pathologist']
         delta = targets.loc[num, 'Absolute Delta (um)'] / 1000
         percent_delta = targets.loc[num, 'Percent Delta'] / 100
         thickness = delta / percent_delta
-        crushes.loc[num, 'Serosal Thickness (mm)'] = thickness
-        crushes.loc[num, 'Post Serosal Thickness (mm)'] = thickness - delta
-        crushes.loc[num, 'Pathologist'] = targets.loc[num, 'Pathologist']
+        crushes.loc[mask, 'Serosal Thickness (mm)'] = thickness
+        crushes.loc[mask, 'Post Serosal Thickness (mm)'] = thickness - delta
 
         # Add actual targets
         for name in target_names:
-            crushes.loc[num, name] = targets.loc[num, name]
+            crushes.loc[mask, name] = targets.loc[num, name]
 
     # Make a copy of features and targets removing any without pathology rating
     valid = ~crushes['Damage Score'].isna()
