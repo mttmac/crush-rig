@@ -14,7 +14,6 @@ import pandas as pd
 import numpy as np
 import scipy.signal as signal
 import matplotlib.pyplot as plt
-import seaborn as sns
 
 import os
 import platform
@@ -102,7 +101,7 @@ def study_targets(root_folder=None):
     # Use whichever pathologist score is available without averaging
     path_score = pd.concat([path_scores[0][valid], path_scores[1][valid]],
                            axis=1).max(axis=1)
-    path_score.name = 'Damage Score'  # 0, 1, 2, 3 categorical
+    path_score.name = 'Trauma Score'  # 0, 1, 2, 3 categorical
 
     # Get pathologist names
     paths = pd.Series(index=path_scores[0].index,
@@ -117,7 +116,7 @@ def study_targets(root_folder=None):
     id_labels = ['Patient Code', 'Protocol', 'Tissue', 'Load (g)']
     abs_deltas = targets.loc[valid, 'Absolute Delta (um)']
     deltas = targets.loc[valid, 'Percent Delta']
-    pscores = targets.loc[valid, 'Pscore']
+    pscores = targets.loc[valid, 'P Score']
     ids = targets.loc[valid, id_labels]
     for label in id_labels:
         if label == 'Load (g)':
@@ -602,7 +601,7 @@ def preprocess(crushes, targets):
     for ex in excluded:
         if ex in feature_names:
             feature_names.remove(ex)
-    target_names = ['Damage Score', 'Pscore']
+    target_names = ['Trauma Score', 'P Score']
 
     # Init new targets
     for name in target_names:
@@ -635,7 +634,7 @@ def preprocess(crushes, targets):
             crushes.loc[mask, name] = targets.loc[num, name]
 
     # Make a copy of features and targets removing any without pathology rating
-    valid = ~crushes['Damage Score'].isna()
+    valid = ~crushes['Trauma Score'].isna()
     X = crushes.loc[valid, feature_names].copy()
     y = crushes.loc[valid, target_names].copy()
 
@@ -670,21 +669,21 @@ def refine(y, drop_cols=True):
     '''
     Input the target values and change them to be boolean and more descriptive.
     '''
-    y['Significant Serosal Change'] = y['Pscore'] < 0.05  # 5% significance
-    y.loc[y['Pscore'].isna(), 'Significant Serosal Change'] = np.nan
+    y['Significant Serosal Change'] = y['P Score'] < 0.05  # 5% significance
+    y.loc[y['P Score'].isna(), 'Significant Serosal Change'] = np.nan
 
-    y['Tissue Damage'] = y['Damage Score'] > 0
+    y['Tissue Damage'] = y['Trauma Score'] > 0
     y.loc[y['Damage Score'].isna(), 'Tissue Damage'] = np.nan
 
-    y['Major Tissue Damage'] = y['Damage Score'] > 1
+    y['Major Tissue Damage'] = y['Trauma Score'] > 1
     y.loc[y['Damage Score'].isna(), 'Major Tissue Damage'] = np.nan
 
-    valid = ~(y['Pscore'].isna() | y['Damage Score'].isna())
+    valid = ~(y['P Score'].isna() | y['Trauma Score'].isna())
     y = y.loc[valid, :]
 
     if drop_cols:
-        y = y.drop('Pscore', axis=1)
-        y = y.drop('Damage Score', axis=1)
+        y = y.drop('P Score', axis=1)
+        y = y.drop('Trauma Score', axis=1)
 
     return y
 
@@ -697,5 +696,5 @@ if __name__ == "__main__":
     crushes = split(crushes)
     crushes = modify(crushes)
     crushes = calculate(crushes)
-    X, y, legend = prep(crushes, targets)
+    X, y, legend = preprocess(crushes, targets)
     y = refine(y)
