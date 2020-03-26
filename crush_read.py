@@ -675,10 +675,10 @@ def classify(y, drop_cols=True):
     y.loc[y['P Score'].isna(), 'Significant Serosal Change'] = np.nan
 
     y['Tissue Damage'] = y['Trauma Score'] > 0
-    y.loc[y['Damage Score'].isna(), 'Tissue Damage'] = np.nan
+    y.loc[y['Trauma Score'].isna(), 'Tissue Damage'] = np.nan
 
     y['Major Tissue Damage'] = y['Trauma Score'] > 1
-    y.loc[y['Damage Score'].isna(), 'Major Tissue Damage'] = np.nan
+    y.loc[y['Trauma Score'].isna(), 'Major Tissue Damage'] = np.nan
 
     valid = ~(y['P Score'].isna() | y['Trauma Score'].isna())
     y = y.loc[valid, :]
