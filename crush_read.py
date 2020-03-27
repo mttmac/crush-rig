@@ -326,7 +326,10 @@ def crush_distance(crush):
 
 # TODO refine this definition to be zero just before contact
 def hanging_force(crush):
-    return crush['Force (N)'][crush.index < contact_time(crush)].mean()
+    hanging_mask = crush.index < contact_time(crush)
+    if hanging_mask.sum() == 0:
+        hanging_mask[0] = True  # default to first index
+    return crush['Force (N)'][hanging_mask].mean()
 
 
 def smooth_force(crush):
