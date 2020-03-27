@@ -589,25 +589,19 @@ def preprocess(crushes, targets):
     Note that crushes gets modified (side affect)
     """
 
-    # Init new features and targets
-    crushes['Pathologist'] = np.nan
-    crushes['Serosal Thickness (mm)'] = np.nan
-    crushes['Post Serosal Thickness (mm)'] = np.nan
-    crushes['Serosal Thickness Change (mm)'] = np.nan
-
     # Get list of features and targets
     target_names = ['Trauma Score',
                     'P Score',
                     'Serosal Thickness (mm)',
                     'Post Serosal Thickness (mm)',
                     'Serosal Thickness Change (mm)']
-    excluded = ['Test ID',
-                'Patient',
-                'Load (g)',
-                'Summary',
-                'Data'] + target_names
+    excluded_feat = ['Test ID',
+                    'Patient',
+                    'Load (g)',
+                    'Summary',
+                    'Data'] + target_names
     feature_names = list(crushes.columns)
-    for ex in excluded:
+    for ex in excluded_feat:
         if ex in feature_names:
             feature_names.remove(ex)
 
@@ -628,9 +622,6 @@ def preprocess(crushes, targets):
         mask = mask & (crushes['Tissue'] == sel['TISS'])
         mask = mask & (crushes['Load (g)'] == sel['LOAD'])
         assert mask.sum() == 1, f"Matching error: {mask.sum():d} matches found"
-
-        # Assign new feature values
-        crushes.loc[mask, 'Pathologist'] = targets.loc[num, 'Pathologist']
 
         # Add regression targets
         delta = targets.loc[num, 'Absolute Delta (um)'] / 1000
