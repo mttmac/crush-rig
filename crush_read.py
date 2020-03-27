@@ -386,7 +386,10 @@ def add_stiffness(crush, n_pieces=10):
 
     def slope(x, y):
         x = np.stack([x, np.ones(len(x))], axis=1)
-        line = np.linalg.lstsq(x, y, rcond=None)
+        try:
+            line = np.linalg.lstsq(x, y)
+        except:
+            set_trace()
         return line[0][0]
 
     crush['Stiffness (MPa)'] = np.nan
@@ -586,23 +589,27 @@ def preprocess(crushes, targets):
     Note that crushes gets modified (side affect)
     """
 
-    # Init new features
+    # Init new features and targets
     crushes['Pathologist'] = np.nan
     crushes['Serosal Thickness (mm)'] = np.nan
     crushes['Post Serosal Thickness (mm)'] = np.nan
     crushes['Serosal Thickness Change (mm)'] = np.nan
 
     # Get list of features and targets
+    target_names = ['Trauma Score',
+                    'P Score',
+                    'Serosal Thickness (mm)',
+                    'Post Serosal Thickness (mm)',
+                    'Serosal Thickness Change (mm)']
     excluded = ['Test ID',
                 'Patient',
                 'Load (g)',
                 'Summary',
-                'Data']
+                'Data'] + target_names
     feature_names = list(crushes.columns)
     for ex in excluded:
         if ex in feature_names:
             feature_names.remove(ex)
-    target_names = ['Trauma Score', 'P Score']
 
     # Init new targets
     for name in target_names:
@@ -624,6 +631,8 @@ def preprocess(crushes, targets):
 
         # Assign new feature values
         crushes.loc[mask, 'Pathologist'] = targets.loc[num, 'Pathologist']
+
+        # Add regression targets
         delta = targets.loc[num, 'Absolute Delta (um)'] / 1000
         percent_delta = targets.loc[num, 'Percent Delta'] / 100
         thickness = delta / percent_delta
@@ -631,8 +640,8 @@ def preprocess(crushes, targets):
         crushes.loc[mask, 'Post Serosal Thickness (mm)'] = thickness - delta
         crushes.loc[mask, 'Serosal Thickness Change (mm)'] = delta
 
-        # Add actual targets
-        for name in target_names:
+        # Add classifier targets
+        for name in target_names[:2]:
             crushes.loc[mask, name] = targets.loc[num, name]
 
     # Make a copy of features and targets removing any without pathology rating
