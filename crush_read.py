@@ -670,7 +670,7 @@ def preprocess(crushes, targets):
     return X, y, legend
 
 
-def classify(y, drop_cols=True):
+def binary_classes(y, drop_cols=True):
     '''
     Input the target values and change them to be boolean and more descriptive.
     '''
