@@ -147,7 +147,7 @@ def study_data(study):
                 'Protocol',
                 'Tissue',
                 'Gender',
-                'Age (days)',
+                'Age (years)',
                 'Load (g)',
                 'Summary',
                 'Data']
@@ -179,8 +179,8 @@ def study_data(study):
                 'Protocol': crush_match.group('protocol').upper(),
                 'Tissue': study.loc[test, 'Classification'].upper(),
                 'Gender': study.loc[test, 'Gender'].upper(),
-                'Age (days)': int((study.loc[test, 'Procedure Date'] -
-                                   study.loc[test, 'DOB']).days),
+                'Age (years)': int((study.loc[test, 'Procedure Date'] -
+                                   study.loc[test, 'DOB']).days) / 365,
                 'Load (g)': int(float(crush_match.group('load'))),
                 'Data': data}
             crush_dict['Summary'] = "Patient {} ({}), {} crush at {}g".format(
@@ -190,7 +190,7 @@ def study_data(study):
                                     crush_dict['Load (g)'])
             crushes = crushes.append(crush_dict, ignore_index=True)
 
-    types = {'Age (days)': np.int64,
+    types = {'Age (years)': np.float64,
              'Load (g)': np.int64}
     crushes = crushes.astype(types)
     crushes.index.name = 'Crush'
@@ -595,9 +595,10 @@ def preprocess(crushes, targets):
     # Get list of features and targets
     target_names = ['Trauma Score',
                     'P Score',
-                    'Serosal Thickness (mm)',
-                    'Post Serosal Thickness (mm)',
-                    'Serosal Thickness Change (mm)']
+                    'Serosa Thickness (mm)',
+                    'Post Serosa Thickness (mm)',
+                    'Serosa Change (mm)',
+                    'Percent Serosa Change']
     excluded_feat = ['Test ID',
                     'Patient',
                     'Load (g)',
@@ -626,13 +627,14 @@ def preprocess(crushes, targets):
         mask = mask & (crushes['Load (g)'] == sel['LOAD'])
         assert mask.sum() == 1, f"Matching error: {mask.sum():d} matches found"
 
-        # Add regression targets
-        delta = targets.loc[num, 'Absolute Delta (um)'] / 1000
-        percent_delta = targets.loc[num, 'Percent Delta'] / 100
+        # Add potential regression targets
+        delta = np.abs(targets.loc[num, 'Absolute Delta (um)'] / 1000)
+        percent_delta = np.abs(targets.loc[num, 'Percent Delta'] / 100)
         thickness = delta / percent_delta
-        crushes.loc[mask, 'Serosal Thickness (mm)'] = thickness
-        crushes.loc[mask, 'Post Serosal Thickness (mm)'] = thickness - delta
-        crushes.loc[mask, 'Serosal Thickness Change (mm)'] = delta
+        crushes.loc[mask, 'Serosa Thickness (mm)'] = thickness
+        crushes.loc[mask, 'Post Serosa Thickness (mm)'] = thickness - delta
+        crushes.loc[mask, 'Serosa Change (mm)'] = delta
+        crushes.loc[mask, 'Percent Serosa Change'] = percent_delta
 
         # Add classifier targets
         for name in target_names[:2]:
@@ -665,7 +667,7 @@ def preprocess(crushes, targets):
             X.loc[X[label] == cat, label] = idx
 
         renames[label] = f"{label} ({cats[0]} or {cats[1]})"
-    X = X.rename(renames, axis=1)
+    # X = X.rename(renames, axis=1)  # exclude for presentation preference
 
     return X, y, legend
 
@@ -674,8 +676,8 @@ def binary_classes(y, drop_cols=True):
     '''
     Input the target values and change them to be boolean and more descriptive.
     '''
-    y['Significant Serosal Change'] = y['P Score'] < 0.05  # 5% significance
-    y.loc[y['P Score'].isna(), 'Significant Serosal Change'] = np.nan
+    y['Significant Serosa Change'] = y['P Score'] < 0.05  # 5% significance
+    y.loc[y['P Score'].isna(), 'Significant Serosa Change'] = np.nan
 
     y['Tissue Damage'] = y['Trauma Score'] > 0
     y.loc[y['Trauma Score'].isna(), 'Tissue Damage'] = np.nan
